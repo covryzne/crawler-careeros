@@ -1,1 +1,120 @@
-# crawler-careeros
+# CareerOS standalone crawler
+
+Backend integration is still preparation work. See [CRAWLER_INTEGRATION.md](../specs-careeros/CRAWLER_INTEGRATION.md) and [the proposed service contract](../specs-careeros/contracts/crawler-service.openapi.json) for the agreed service boundary and draft API. No crawler HTTP service, durable queue or scheduler is implemented by those documents.
+
+Two search strategies, independent of the CareerOS backend:
+
+- `browser-use` (default): Google keyword discovery, then agent-driven exploration of discovered sources. Existing prompts, validation, limits, and output files are retained.
+- `selenium`: direct keyword search on explicitly selected portals, using source-specific adapters. No LLM calls or API keys are required.
+
+## Setup
+
+Python 3.12 or 3.13 and Google Chrome are required. From this directory:
+
+```powershell
+python -m venv .venv
+.venv/Scripts/python.exe -m pip install -e ".[test]"
+Copy-Item .env.example .env
+```
+
+Or use `uv sync --extra test --python 3.12`. For Browser Use, also run `uvx browser-use install` and configure the selected LLM key in `.env`.
+
+Selenium Manager obtains a matching ChromeDriver on first execution; that step needs network access. Optionally set `SE_CACHE_PATH` to a writable driver-cache directory. See [Selenium Manager](https://www.selenium.dev/documentation/selenium_manager/).
+
+## Run
+
+Existing Browser Use workflow (uses the existing `.env` settings):
+
+```powershell
+.venv/Scripts/python.exe main.py
+.venv/Scripts/python.exe main.py --mode browser-use --keyword "AI Engineer loker"
+```
+
+Direct deterministic search:
+
+```powershell
+.venv/Scripts/python.exe main.py --mode selenium --portals linkedin jobstreet --keyword "AI Engineer" --days 7 --max-pages 2 --max-jobs 20
+.venv/Scripts/python.exe main.py --mode selenium --portals jobstreet --keyword "Data Analyst" --headed
+.venv/Scripts/python.exe main.py --mode selenium --portals glints indeed --keyword "AI Engineer" --max-jobs 10
+```
+
+Omitting `--portals` in Selenium mode selects all four supported portals. Keyword defaults to `SEARCH_KEYWORD` or `AI Engineer`. Run `main.py --help` for options.
+
+| Portal | Default browser | Date behavior |
+| --- | --- | --- |
+| LinkedIn | Headless | `f_TPR` requests the selected number of days |
+| JobStreet | Visible | `daterange` requests the selected number of days |
+| Glints | Visible | `sortBy=LATEST`; **no age cutoff** is requested or enforced |
+| Indeed | Headless | `fromage` requests the selected number of days |
+
+Defaults are adapter-specific: JobStreet and Glints use a visible browser because headed access succeeded where headless access was challenged. `--headed` forces visible browsers for every selected portal; `--headless` explicitly forces headless for every portal. These flags are mutually exclusive. The effective setting is recorded as `sources[].headless`; `request.headless=null` means automatic per-portal selection. Visible mode does not guarantee portal access.
+
+- `--max-jobs`: cap on distinct detail attempts **per portal**, not a guarantee of accepted jobs.
+- `--max-pages`: listing pages for JobStreet; initial listing plus additional load-more batches for LinkedIn; observed next-page controls or scroll batches for Glints and Indeed.
+- `--timeout`: navigation / explicit wait timeout, in seconds.
+- `--delay`: pacing between browser operations, default two seconds.
+- `--location`: Indonesia by default. JobStreet and Glints currently support Indonesia only. Indeed uses an empty `l` for nationwide Indonesia or the supplied city. For another LinkedIn location, also supply its matching `--linkedin-geo-id`.
+- `--output-dir`: output parent for either strategy, default `output/runs`.
+
+Portal/date/browser CLI options apply only to Selenium and are rejected in Browser Use mode. Browser Use retains its `.env` limits (`MAX_SEARCH_PAGES`, `MAX_SOURCES`, `MAX_JOBS_PER_SOURCE`, `DISCOVERY_STEPS`, `EXPLORER_STEPS`).
+
+## Structure
+
+```text
+src/browser_lab/          Existing Google discovery / Browser Use exploration
+src/crawler/cli.py       Strategy selection, no backend integration
+src/crawler/models.py    Validated request, portal identity, normalized job
+src/crawler/runner.py    Selenium lifecycle, bounded collection, checkpoints
+src/crawler/adapters/    Portal-specific URLs, discovery, waits, extraction
+```
+
+Each portal adapter implements `search_url`, `reference`, and `card_links`; it configures detail selectors and optionally overrides `advance`. Register a new adapter in `ADAPTERS` and add its name to `PORTALS`. Keep portal selectors and pagination rules out of the runner.
+
+The runner collects observed card IDs first, then opens canonical detail URLs. Identity is `(portal, external_id)`, independent of keyword, pagination, and tracking parameters. Each detail must have the requested ID in its final URL plus a visible title and description. Explicit waits coordinate page readiness; see [Selenium waits](https://www.selenium.dev/documentation/webdriver/waits/).
+
+LinkedIn uses guest listing scroll / Show more rather than interpreting selected-card `position` or `pageNum` as page-navigation commands. JobStreet uses `daterange` and `page`. Glints and Indeed follow observed next controls without inventing page sizes or offsets. Unrecognized pagination is recorded as `pagination_unavailable`, rather than assumed to be the last page. An explicit disabled next control ends collection.
+
+Glints identifies jobs by the UUID in the observed detail URL; Indeed uses `jk`/`vjk`, independent of tracking parameters. Glints detail selectors use observed accessibility labels and scoped company/salary elements. Its own matching JobPosting JSON-LD supplements location and posting date. Related-job cards are not used for detail fields. `identifier.value` in Glints JSON-LD can identify the company and is not treated as a job ID.
+
+The date filter is requested from each portal where supported; relative posting text is preserved, not converted to an independently verified posting date. Glints records `date_filter=latest_sort_only_no_age_filter` in its source manifest: `--days` does not filter Glints results. A posting date may be available in `posted_at_raw`, including dates older than the requested range.
+
+If Glints asks guests to log in for further results, pagination stops with `pagination_login_required`; the runner still extracts public detail URLs already discovered and marks the source partial. It does not click login or navigate around the guest limit.
+
+## Output and failure behavior
+
+Each run creates `output/runs/<run-id>/manifest.json` and `jobs.json`. Selenium additionally writes `<portal>-<job-id>.json` for each accepted job. Both strategies expose the existing job fields (`title`, `job_url`, `company`, `location`, `description`, `requirements`, `salary`, `application_url`) and search provenance. Selenium adds `portal`, `external_id`, `extraction_method`, `raw_description`, `posted_at_raw`, `observed_url`, and `crawled_at`.
+
+Selenium also checkpoints **`discovered.json`** as soon as cards are collected. Its `jobs` list contains portal ID, canonical URL, exact observed card URL, title, search provenance, and optional card company/location/salary/snippet. These are discovery records, not full descriptions. The same snapshots appear in `manifest.discovered_jobs`. They survive a later login gate, challenge, timeout, or browser failure; `jobs.json` continues to contain only successfully extracted complete details. A source with discovered cards but blocked details is `partial`, with the blocking reason recorded separately. Discovery snapshots obey `--max-jobs` per portal just like detail attempts.
+
+Indeed opens observed cards in their public search-page context and reads the selected detail panel instead of automatically navigating to `/viewjob`. Panel extraction requires matching `vjk` plus a matching panel job marker; without a marker it checks title and, after switching cards, a changed/replaced description panel. This avoids mixing two same-title jobs. Standalone public detail pages can still be parsed, but no alternative authenticated endpoint is tried when access requires login. A dismissible sign-in dialog can be closed once per detail; mandatory sign-in, including `secure.indeed.com/auth` with session path parameters, stops the portal immediately as `login_required`. Account session identifiers are omitted from diagnostic URLs.
+
+Indeed schedules details **per listing page** (`sources[].detail_schedule=per_page`): collect and checkpoint page 1 cards, attempt their public details, then advance to page 2. A later pagination challenge therefore cannot prevent those earlier detail attempts or remove saved jobs. Other adapters retain their existing discovery-first schedule. The total distinct-ID cap and deduplication apply across pages. Mandatory login/challenges still stop further navigation. Detail failure diagnostics include description/panel counts and iframe host/path information to distinguish a missing panel from an embedded document or access gate.
+
+Selenium preserves complete rendered description text. It does not guess requirement sections or application links; those fields remain null when not explicitly extracted. Salary and other missing optional fields remain null. Portal search results are retained without the Browser Use lab's AI-role-specific relevance filter; ranking can happen separately.
+
+Checkpoints retain accepted jobs when a later page/detail fails. Detail failures normally allow the next ID to proceed. Authentication, visible security challenges, and access denial stop that portal. There is no login, application submission, CAPTCHA solving, or automatic Browser Use fallback. The browser closes after each portal. Failure diagnostics include the final URL, page title, and a short visible-body excerpt; no screenshot is saved.
+
+Selenium exits with code 1 if any portal has errors; inspect `sources`, per-detail states, and `errors` in the manifest. Empty results require an explicit empty/end indication; a timeout is recorded as a failure rather than silently reporting zero jobs.
+
+## Verification
+
+```powershell
+.venv/Scripts/python.exe -m pytest -q
+# Optional real Chrome checks against synthetic local fixtures:
+$env:CRAWLER_BROWSER_TESTS = '1'
+.venv/Scripts/python.exe -m pytest -q
+```
+
+Tests cover search filters, identity normalization, foreign-link rejection, invalid inputs, deduplication, partial failures, challenge handling, cleanup, CLI routing, and fixture DOM extraction. Synthetic fixtures do not establish that live portal selectors still work.
+
+Live verification on 2026-11-02: LinkedIn guest search/detail extraction succeeded. JobStreet headless access was challenged; the user subsequently confirmed extraction with a visible browser. Glints headed search and two detail extractions succeeded; headless access was challenged. Indeed headless access returned Request Blocked, and headed access required additional verification; its extraction and pagination are fixture-tested but not live-verified. The adapters record these access conditions without bypassing verification. Browser Use routing is regression-tested without spending LLM tokens.
+
+The user's later headed Indeed run discovered cards but redirected `/viewjob` requests to the account page. Login detection and discovery persistence were fixed, and public-panel support was added with fixture tests. A subsequent live retry was blocked before listing cards loaded, so the new panel flow remains unverified against the live site. Glints without `--headed` still uses the adapter's visible-browser default; inspect `sources[].headless` or explicitly pass `--headless` to test actual headless mode.
+
+Follow-up on 2026-11-03: run `20261102T115443Z-fa530c` timed out at discovery despite visible listing text; the manifest alone cannot distinguish missing selectors, rejected IDs, and transient metadata. Indeed now accepts title links across heading levels and supports validated `data-jk` identity on the trusted listing when `href` is absent. Optional stale metadata no longer discards an already identified card. Listing failures include candidate counts and compact ID/path samples for diagnosis. The next bounded live run discovered and saved two cards, but both public-panel detail attempts timed out; full Indeed detail extraction is still not live-verified.
+
+Run `20261102T214729Z-39ff56` discovered 16 cards but encountered a challenge on `start=10` before any details were attempted under the old discovery-first schedule. The per-page schedule fixes that ordering problem. A bounded live retry after the change was challenged at the initial listing, so successful live panel extraction remains unverified. For a focused manual check use `--headed --max-pages 1 --max-jobs 5`; longer timeouts cannot resolve an explicit access challenge.
+
+Successful panel verification on 2026-11-03: run `20261102T215253Z-96945b` showed complete visible descriptions but zero matches for the old `#jobDescriptionText` selector. Live DOM inspection identified the newer layout's `[data-testid="vj-job-title"]` (an h5) and `.simple-job-description-html`. The adapter now supports both layouts, scopes company links to `company-info-metadata`, and can retain matching card location/salary when the panel omits those fields. A bounded visible description-section fallback handles changed wrappers without reading the whole panel, recommendations, or footer. Hidden/noninteractive title links are excluded from discovery.
+
+After these fixes, live run **`20261102T220312Z-1fd23b` completed with 5 discovered and 5 accepted jobs**, using `--headed --max-pages 1 --max-jobs 5`. Title, company, location and full description were saved in `jobs.json`. The earlier per-page and authentication fixes remain in place. This establishes successful first-page public-panel extraction; headless access and later pages may still encounter portal challenges.

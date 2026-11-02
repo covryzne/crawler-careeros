@@ -1,0 +1,33 @@
+<!doctype html><html><body>
+<div class="job_seen_beacon" data-jk="db4460f475924520">
+  <h2 class="jobTitle"><a class="jcs-JobTitle" href="https://id.indeed.com/rc/clk?jk=db4460f475924520" onclick="selectJob(event, 'db4460f475924520')">AI Engineer</a></h2>
+  <div data-testid="company-name">First Company</div><div data-testid="text-location">Jakarta</div>
+  <div class="salary-snippet-container">Rp10.000.000 per month</div><div class="job-snippet">First card summary only.</div>
+</div>
+<div class="job_seen_beacon" data-jk="ab4460f475924521">
+  <h2 class="jobTitle"><a class="jcs-JobTitle" href="https://id.indeed.com/viewjob?jk=ab4460f475924521" onclick="selectJob(event, 'ab4460f475924521')">AI Engineer</a></h2>
+  <div data-testid="company-name">Second Company</div><div data-testid="text-location">Bandung</div>
+  <div class="job-snippet">Second card summary only.</div>
+</div>
+<div id="jobsearch-ViewjobPaneWrapper" data-jk="db4460f475924520">
+  <h2 class="jobsearch-JobInfoHeader-title">AI Engineer</h2>
+  <div data-testid="inlineHeader-companyName">First Company</div>
+  <div data-testid="inlineHeader-companyLocation">Jakarta</div>
+  <div id="jobDescriptionText">First job full description.</div>
+</div>
+<script>
+function selectJob(event, id) {
+  event.preventDefault();
+  document.body.dataset.selected = id;
+  // Reuse the same DOM and title: the previous panel must not be accepted while loading.
+  window.commitPanel = () => {
+    const first = id === 'db4460f475924520';
+    document.getElementById('jobsearch-ViewjobPaneWrapper').dataset.jk = id;
+    document.getElementById('jobDescriptionText').textContent = first ? 'First job full description.' : 'Second job full description.';
+    document.querySelector('[data-testid="inlineHeader-companyName"]').textContent = first ? 'First Company' : 'Second Company';
+    document.querySelector('[data-testid="inlineHeader-companyLocation"]').textContent = first ? 'Jakarta' : 'Bandung';
+  };
+  if (!window.deferPanelUpdate) setTimeout(window.commitPanel, 150);
+}
+</script>
+</body></html>

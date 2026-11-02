@@ -1,0 +1,19 @@
+[project]
+name = "careeros-browser-lab"
+version = "0.1.0"
+description = "Standalone modular job crawler with Browser Use and Selenium portal adapters"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "browser-use>=0.11,<1",
+  "python-dotenv>=1.0,<2",
+  "selenium>=4.27,<5",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
