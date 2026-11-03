@@ -38,7 +38,17 @@ Direct deterministic search:
 .venv/Scripts/python.exe main.py --mode selenium --portals glints indeed --keyword "AI Engineer" --max-jobs 10
 ```
 
-Omitting `--portals` in Selenium mode selects all four supported portals. Keyword defaults to `SEARCH_KEYWORD` or `AI Engineer`. Run `main.py --help` for options.
+Omitting `--portals` in Selenium mode selects all seven supported portals. Keyword defaults to `SEARCH_KEYWORD` or `AI Engineer`. Run `main.py --help` for options.
+
+New adapters can be tested individually on Linux:
+
+```bash
+python main.py --mode selenium --portals kalibrr --keyword "AI Engineer" --max-pages 1 --max-jobs 3
+python main.py --mode selenium --portals techinasia --keyword "data engineer" --max-pages 1 --max-jobs 3
+xvfb-run -a -s "-screen 0 1440x1000x24" python main.py --mode selenium --portals dealls --keyword "data engineer" --headed --max-pages 1 --max-jobs 3
+```
+
+Deployment direction: scheduled server crawling uses Selenium adapters. Browser Use remains in this repository for local, optional crawling. The planned local workflow is Browser Use -> CSV export -> dashboard Jobs upload. CSV export/import and dashboard integration are separate follow-up work and are not implemented by these adapters; current crawl artifacts remain JSON.
 
 | Portal | Default browser | Date behavior |
 | --- | --- | --- |
@@ -46,14 +56,17 @@ Omitting `--portals` in Selenium mode selects all four supported portals. Keywor
 | JobStreet | Visible | `daterange` requests the selected number of days |
 | Glints | Visible | `sortBy=LATEST`; **no age cutoff** is requested or enforced |
 | Indeed | Headless | `fromage` requests the selected number of days |
+| Dealls | Visible | Portal default relevance ordering; **no age cutoff** |
+| Kalibrr | Headless | `sort=Freshness`; **no age cutoff** |
+| Tech in Asia | Headless | Indonesia search filter; **no age cutoff** |
 
-Defaults are adapter-specific: JobStreet and Glints use a visible browser because headed access succeeded where headless access was challenged. `--headed` forces visible browsers for every selected portal; `--headless` explicitly forces headless for every portal. These flags are mutually exclusive. The effective setting is recorded as `sources[].headless`; `request.headless=null` means automatic per-portal selection. Visible mode does not guarantee portal access.
+Defaults are adapter-specific: JobStreet, Glints and Dealls use a visible browser because headed access succeeded where headless access was challenged or blocked. `--headed` forces visible browsers for every selected portal; `--headless` explicitly forces headless for every portal. These flags are mutually exclusive. The effective setting is recorded as `sources[].headless`; `request.headless=null` means automatic per-portal selection. Visible mode does not guarantee portal access.
 
 - `--max-jobs`: cap on distinct detail attempts **per portal**, not a guarantee of accepted jobs.
 - `--max-pages`: listing pages for JobStreet; initial listing plus additional load-more batches for LinkedIn; observed next-page controls or scroll batches for Glints and Indeed.
 - `--timeout`: navigation / explicit wait timeout, in seconds.
 - `--delay`: pacing between browser operations, default two seconds.
-- `--location`: Indonesia by default. JobStreet and Glints currently support Indonesia only. Indeed uses an empty `l` for nationwide Indonesia or the supplied city. For another LinkedIn location, also supply its matching `--linkedin-geo-id`.
+- `--location`: Indonesia by default. JobStreet, Glints, Dealls, Kalibrr and Tech in Asia currently support Indonesia only. Indeed uses an empty `l` for nationwide Indonesia or the supplied city. For another LinkedIn location, also supply its matching `--linkedin-geo-id`.
 - `--output-dir`: output parent for either strategy, default `output/runs`.
 
 Portal/date/browser CLI options apply only to Selenium and are rejected in Browser Use mode. Browser Use retains its `.env` limits (`MAX_SEARCH_PAGES`, `MAX_SOURCES`, `MAX_JOBS_PER_SOURCE`, `DISCOVERY_STEPS`, `EXPLORER_STEPS`).
@@ -69,6 +82,10 @@ src/crawler/adapters/    Portal-specific URLs, discovery, waits, extraction
 ```
 
 Each portal adapter implements `search_url`, `reference`, and `card_links`; it configures detail selectors and optionally overrides `advance`. Register a new adapter in `ADAPTERS` and add its name to `PORTALS`. Keep portal selectors and pagination rules out of the runner.
+
+Dealls discovers indexed `/en/loker/<job>~<company>` cards and follows the observed See More button. Its `external_id` is the complete route slug (including company), because the listing does not expose the native detail-only ID. Locale and tracking parameters do not change this identity; a portal slug change can change identity. Kalibrr uses the numeric `/c/<company>/jobs/<id>/<slug>` ID and the observed Load more jobs button. Tech in Asia uses `/jobs/<UUID>` and title anchors, excluding employers/search/apply routes. All three follow observed pagination controls or newly loaded scroll results; absent pagination is reported as unavailable rather than silently treated as end of results.
+
+Descriptions are read from the observed job sections, excluding company profiles and recommendations. Dealls retains Job Description, Requirements and Benefits; Kalibrr retains description, qualifications and job benefits; Tech in Asia retains the combined description/requirements and Required skills. Explicit standalone requirements populate `requirements` for Dealls and Kalibrr. Matching page JobPosting metadata supplements posting dates/location for Dealls and Tech in Asia. Kalibrr preserves the page's own `datePosted`; recruiter activity and Dealls' Actively hiring text are not treated as posting dates. `--days` is not enforced for these three adapters, as recorded in their `date_filter` manifest fields.
 
 The runner collects observed card IDs first, then opens canonical detail URLs. Identity is `(portal, external_id)`, independent of keyword, pagination, and tracking parameters. Each detail must have the requested ID in its final URL plus a visible title and description. Explicit waits coordinate page readiness; see [Selenium waits](https://www.selenium.dev/documentation/webdriver/waits/).
 
@@ -96,6 +113,8 @@ Checkpoints retain accepted jobs when a later page/detail fails. Detail failures
 
 Selenium exits with code 1 if any portal has errors; inspect `sources`, per-detail states, and `errors` in the manifest. Empty results require an explicit empty/end indication; a timeout is recorded as a failure rather than silently reporting zero jobs.
 
+Browser Use also exits with code 1 for `completed_with_errors`. Source outcomes `partial`, `login_required`, `challenge_blocked`, `access_denied` and `failed` are recorded as structured exploration errors even when the agent returns normally. Source records include `reported_status` and rejection-reason counts. A claimed success with missing/unsafe job URLs is downgraded to partial. Valid accepted jobs remain saved. Genuine no-relevant-job outcomes and jobs rejected solely for relevance/duplication do not by themselves indicate execution failure. This corrects aggregate reporting; it does not repair a site's search controls or the extraction tool's schema compatibility.
+
 ## Verification
 
 ```powershell
@@ -118,3 +137,7 @@ Run `20261102T214729Z-39ff56` discovered 16 cards but encountered a challenge on
 Successful panel verification on 2026-11-03: run `20261102T215253Z-96945b` showed complete visible descriptions but zero matches for the old `#jobDescriptionText` selector. Live DOM inspection identified the newer layout's `[data-testid="vj-job-title"]` (an h5) and `.simple-job-description-html`. The adapter now supports both layouts, scopes company links to `company-info-metadata`, and can retain matching card location/salary when the panel omits those fields. A bounded visible description-section fallback handles changed wrappers without reading the whole panel, recommendations, or footer. Hidden/noninteractive title links are excluded from discovery.
 
 After these fixes, live run **`20261102T220312Z-1fd23b` completed with 5 discovered and 5 accepted jobs**, using `--headed --max-pages 1 --max-jobs 5`. Title, company, location and full description were saved in `jobs.json`. The earlier per-page and authentication fixes remain in place. This establishes successful first-page public-panel extraction; headless access and later pages may still encounter portal challenges.
+
+New adapter verification on 2026-11-03 (local Windows Chrome): `20261103T061328Z-856653` saved 2/2 Tech in Asia details headless and 1/2 Kalibrr details headless; the second Kalibrr card redirected to the portal's 404 page. Dealls headless returned a Cloudflare access block. Headed Dealls run `20261103T061522Z-8976d4` saved 2/2 details. These are bounded first-page checks, not Azure verification. Full regression verification after adding the adapters: 104 tests passed, including local Chrome DOM fixtures.
+
+Pagination inspection then exposed transient Kalibrr landing-page cards before keyword-result hydration. The adapter now waits for the card identity list to remain stable for two seconds before checkpointing each batch. After this fix, headless keyword `AI Engineer` run `20261103T061937Z-2b76f6` saved 2/2 details. A listing-only Kalibrr check followed Load more jobs from 15 to 30 cards (15 new IDs). The bounded `data engineer` Dealls and Tech in Asia checks had no observable next control/end indicator and reported `pagination_unavailable`, so complete traversal is not established. Two additional unit regressions cover Kalibrr hydration and Cloudflare block classification; the latest unit run passed 84 tests (22 opt-in browser cases skipped).

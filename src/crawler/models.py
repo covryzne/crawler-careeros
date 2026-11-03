@@ -3,8 +3,8 @@ from typing import Literal
 
 from src.browser_lab.schemas import ExtractedJob
 
-PortalName = Literal['linkedin', 'jobstreet', 'glints', 'indeed']
-PORTALS = ('linkedin', 'jobstreet', 'glints', 'indeed')
+PortalName = Literal['linkedin', 'jobstreet', 'glints', 'indeed', 'dealls', 'kalibrr', 'techinasia']
+PORTALS = ('linkedin', 'jobstreet', 'glints', 'indeed', 'dealls', 'kalibrr', 'techinasia')
 
 
 @dataclass(frozen=True)
@@ -38,7 +38,7 @@ class CrawlRequest:
                 and self.linkedin_geo_id == '102478259'):
             raise ValueError('A custom LinkedIn location requires its corresponding --linkedin-geo-id')
         # Other JobStreet locations need explicit portal-specific mappings.
-        for portal in ('jobstreet', 'glints'):
+        for portal in ('jobstreet', 'glints', 'dealls', 'kalibrr', 'techinasia'):
             if portal in self.portals and self.location.casefold().strip() != 'indonesia':
                 raise ValueError(f'{portal} currently supports location=Indonesia only')
 

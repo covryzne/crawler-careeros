@@ -1,6 +1,7 @@
 import asyncio
 import json
 import uuid
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from .config import load_settings
@@ -16,7 +17,7 @@ def save_json(path: Path, data) -> None:
     tmp.replace(path)
 
 
-async def run(output_dir: Path = Path('output/runs')) -> None:
+async def run(output_dir: Path = Path('output/runs')) -> dict:
     settings = load_settings()
     run_id = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + uuid.uuid4().hex[:6]
     root = output_dir / run_id
@@ -98,9 +99,21 @@ async def run(output_dir: Path = Path('output/runs')) -> None:
                 save_json(root / f'source-{index:02d}.json', {'exploration': raw, 'accepted_jobs': accepted, 'rejected_jobs': rejected})
                 save_json(root / f'source-{index:02d}-debug.json', debug)
                 manifest['jobs'].extend(accepted)
-                record.update(state=result.status, page_type=result.page_type,
+                rejection_reasons = dict(Counter(item['reason'] for item in rejected))
+                incomplete_urls = any(reason in rejection_reasons for reason in (
+                    'missing unique job detail URL', 'invalid/unsafe job URL'))
+                source_state = 'partial' if result.status == 'success' and incomplete_urls else result.status
+                record.update(state=source_state, reported_status=result.status, page_type=result.page_type,
                               jobs_found=len(result.jobs), jobs_accepted=len(accepted),
-                              jobs_rejected=len(rejected), notes=result.notes)
+                              jobs_rejected=len(rejected), rejection_reasons=rejection_reasons,
+                              notes=result.notes)
+                if source_state not in {'success', 'no_relevant_jobs'}:
+                    manifest['errors'].append({
+                        'phase': 'exploration', 'source_url': source_url,
+                        'code': f'SOURCE_{source_state.upper()}', 'status': source_state,
+                        'error': result.notes or f'Source exploration ended with status {source_state}',
+                        'jobs_accepted': len(accepted), 'rejection_reasons': rejection_reasons,
+                    })
                 save_json(root / 'jobs.json', {'keyword': settings.keyword, 'jobs': manifest['jobs']})
             except Exception as exc:
                 record.update(state='failed', error=f'{type(exc).__name__}: {exc}')
@@ -113,7 +126,10 @@ async def run(output_dir: Path = Path('output/runs')) -> None:
     save_json(root / 'jobs.json', {'keyword': settings.keyword, 'jobs': manifest['jobs']})
     save_json(root / 'manifest.json', manifest)
     print(f'[DONE] sources={source_count}, accepted_jobs={len(manifest["jobs"])}. Output: {root}')
+    return manifest
 
 
 def main(output_dir: Path = Path('output/runs')):
-    asyncio.run(run(output_dir))
+    result = asyncio.run(run(output_dir))
+    if result['state'] != 'completed':
+        raise SystemExit(1)

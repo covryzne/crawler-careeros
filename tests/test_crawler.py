@@ -277,7 +277,7 @@ def test_new_portals_reject_non_job_urls(adapter, url):
 
 
 @pytest.mark.parametrize('headless,expected', [
-    (None, [True, False, False, True]), (True, [True] * 4), (False, [False] * 4),
+    (None, [True, False, False, True, False, True, True]), (True, [True] * 7), (False, [False] * 7),
 ])
 def test_browser_policy_applies_per_portal(tmp_path, monkeypatch, headless, expected):
     from src.crawler.adapters import ADAPTERS

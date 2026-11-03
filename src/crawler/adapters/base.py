@@ -42,6 +42,9 @@ def access_problem(driver, include_pending=False):
     heading = (first_text(driver, ('h1',)) or '').casefold()
     if heading == 'request blocked':
         return CrawlProblem('access_denied', 'Portal displayed Request Blocked')
+    if ('attention required' in driver.title.casefold()
+            and 'sorry, you have been blocked' in lower):
+        return CrawlProblem('access_denied', 'Portal displayed a Cloudflare access block')
     if heading == 'additional verification required':
         return CrawlProblem('challenge_blocked', 'Portal requires additional verification')
     if include_pending and ('performing security verification' in lower
