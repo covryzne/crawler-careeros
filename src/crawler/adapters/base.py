@@ -1,5 +1,6 @@
 import re
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
@@ -66,6 +67,8 @@ def access_problem(driver, include_pending=False):
 
 class PortalAdapter(ABC):
     name: str
+    details_per_page = True
+    separate_detail_tab = True
     default_headless = True
     date_filter = 'portal_search_filter'
     title_selectors: tuple[str, ...]
@@ -138,6 +141,25 @@ class PortalAdapter(ABC):
 
     def open_detail(self, driver, ref: JobReference):
         driver.get(ref.url)
+
+    @contextmanager
+    def detail_session(self, driver):
+        """Keep listing pagination/scroll state while processing this batch's details."""
+        if not self.separate_detail_tab:
+            yield
+            return
+        listing = driver.current_window_handle
+        driver.switch_to.new_window('tab')
+        detail = driver.current_window_handle
+        try:
+            yield
+        finally:
+            # Close only our tab; never close a portal-created window or the listing.
+            if detail in driver.window_handles:
+                driver.switch_to.window(detail)
+                driver.close()
+            if listing in driver.window_handles:
+                driver.switch_to.window(listing)
 
     def detail_context(self, driver, ref: JobReference):
         observed = self.reference(driver.current_url, '', ref.discovered_from, ref.search_page)

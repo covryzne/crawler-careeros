@@ -317,3 +317,35 @@ def test_additional_portal_load_more_uses_observed_control(browser, tmp_path, po
     browser.execute_script('document.querySelector("button").remove()')
     with pytest.raises(CrawlProblem, match='No next-page control'):
         adapter.advance(page, 2, set())
+
+
+@pytest.mark.parametrize('blocked', [False, True])
+def test_detail_session_preserves_listing_dom_and_closes_its_tab(browser, tmp_path, blocked):
+    path = tmp_path / 'listing.html'
+    path.write_text('<html><body><div id="loaded-batch">batch 2 loaded</div></body></html>', encoding='utf-8')
+    browser.get(path.resolve().as_uri())
+    listing = browser.current_window_handle
+    adapter = JobStreetAdapter(CrawlRequest(keyword='data', portals=('jobstreet',)))
+    def process():
+        with adapter.detail_session(browser):
+            assert browser.current_window_handle != listing
+            browser.get('about:blank')
+            if blocked:
+                raise CrawlProblem('challenge_blocked', 'test challenge')
+    if blocked:
+        with pytest.raises(CrawlProblem):
+            process()
+    else:
+        process()
+    assert browser.window_handles == [listing]
+    assert browser.current_window_handle == listing
+    assert browser.find_element('id', 'loaded-batch').text == 'batch 2 loaded'
+
+
+def test_indeed_detail_session_keeps_public_panel_tab(browser):
+    browser.get('about:blank')
+    listing = browser.current_window_handle
+    adapter = IndeedAdapter(CrawlRequest(keyword='data', portals=('indeed',)))
+    with adapter.detail_session(browser):
+        assert browser.current_window_handle == listing
+        assert browser.window_handles == [listing]

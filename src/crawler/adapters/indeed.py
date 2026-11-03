@@ -14,6 +14,7 @@ from .base import CrawlProblem, access_problem, first_text
 class IndeedAdapter(ObservedPaginationAdapter):
     name = 'indeed'
     details_per_page = True
+    separate_detail_tab = False  # Indeed extracts the selected public listing panel.
     card_link_selector = ('a.jcs-JobTitle, .jobTitle a, a[data-testid="job-title"], '
                           'a[data-jk][role="button"]')
     title_selectors = ('[data-testid="vj-job-title"]',

@@ -1,6 +1,7 @@
 import json
 import time
 import uuid
+from contextlib import nullcontext
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -138,8 +139,12 @@ def run(request: CrawlRequest, output_dir: Path = Path('output/runs'), driver_fa
                                         'cards_found': len(batch), 'new_ids': len(new)})
                 record['jobs_discovered'] = len(refs)
                 checkpoint()
-                if per_page and process_details(selected):
-                    break
+                if per_page and selected:
+                    session = getattr(adapter, 'detail_session', None)
+                    with session(driver) if session else nullcontext():
+                        stopped = process_details(selected)
+                    if stopped:
+                        break
                 if not new:
                     record['stop_reason'] = 'no_new_ids' if batch else 'empty_or_end'
                     break

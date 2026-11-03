@@ -502,3 +502,55 @@ def test_per_page_schedule_deduplicates_details_and_enforces_total_cap(tmp_path,
     assert [detail['external_id'] for detail in result['sources'][0]['details']] == ['1', '2', '3']
     assert result['sources'][0]['stop_reason'] == 'max_jobs'
     assert len(result['jobs']) == 3
+
+
+def test_all_registered_portals_process_details_per_page():
+    from src.crawler.adapters import ADAPTERS
+    assert all(adapter.details_per_page for adapter in ADAPTERS.values())
+    assert IndeedAdapter.separate_detail_tab is False
+    assert all(adapter.separate_detail_tab for name, adapter in ADAPTERS.items() if name != 'indeed')
+
+
+def test_jobstreet_preserves_listing_and_checkpoints_before_later_challenge(tmp_path, monkeypatch):
+    events = []
+    class Tabs(Driver):
+        current_window_handle = 'listing'
+        window_handles = ['listing']
+        def __init__(self):
+            self.window_handles = ['listing']
+            self.switch_to = self
+        def new_window(self, kind):
+            assert kind == 'tab'
+            self.window_handles.append('details')
+            self.current_window_handle = 'details'
+        def window(self, handle):
+            self.current_window_handle = handle
+        def close(self):
+            assert self.current_window_handle == 'details'
+            self.window_handles.remove('details')
+    class Street(JobStreetAdapter):
+        def advance(self, driver, page, seen):
+            assert driver.current_window_handle == 'listing'
+            events.append(f'listing-{page}')
+            if page == 3:
+                saved = json.loads(next(tmp_path.glob('*/jobs.json')).read_text(encoding='utf-8'))
+                assert len(saved['jobs']) == 3
+                raise CrawlProblem('challenge_blocked', 'later page blocked')
+            return Adapter.advance(self, driver, page, seen)
+        fail_page = None
+        blocked_detail = False
+        detail_failure = False
+        def extract(self, driver, ref):
+            assert driver.current_window_handle == 'details'
+            events.append(f'detail-{ref.external_id}')
+            return Adapter.extract(self, driver, ref)
+    setup_runner(monkeypatch, Street)
+    driver = Tabs()
+    result = run(request(max_pages=3), tmp_path, lambda _: driver)
+    assert events == ['listing-1', 'detail-1', 'detail-2', 'listing-2', 'detail-3', 'listing-3']
+    assert result['sources'][0]['detail_schedule'] == 'per_page'
+    assert result['sources'][0]['stop_reason'] == 'challenge_blocked'
+    assert result['sources'][0]['state'] == 'partial'
+    assert len(result['jobs']) == 3
+    assert driver.window_handles == ['listing']
+    assert driver.closed
