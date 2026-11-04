@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from selenium import webdriver
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import NoSuchDriverException, TimeoutException
 from selenium.webdriver.common.by import By
 
 from .adapters import ADAPTERS
@@ -54,8 +54,14 @@ def diagnostics(driver, adapter=None):
         return {'diagnostics_unavailable': True}
 
 
-def run(request: CrawlRequest, output_dir: Path = Path('output/runs'), driver_factory=None):
+def run(request: CrawlRequest, output_dir: Path = Path('output/runs'), driver_factory=None,
+        event_sink=None, seen_ids=None):
     driver_factory = driver_factory or create_driver
+    seen_ids = set(seen_ids or ())
+
+    def emit(kind, **data):
+        if event_sink is not None:
+            event_sink({'type': kind, **data})
     run_id = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + uuid.uuid4().hex[:6]
     root = Path(output_dir) / run_id
     manifest = {'run_id': run_id, 'mode': 'selenium', 'state': 'running',
@@ -77,6 +83,8 @@ def run(request: CrawlRequest, output_dir: Path = Path('output/runs'), driver_fa
                   'headless': portal_request.headless,
                   'date_filter': getattr(adapter_class, 'date_filter', 'portal_search_filter')}
         manifest['sources'].append(record)
+        emit('source_started', platform=portal, headless=portal_request.headless,
+             date_filter=record['date_filter'])
         driver = None
         adapter = adapter_class(portal_request)
         refs = {}
@@ -88,6 +96,7 @@ def run(request: CrawlRequest, output_dir: Path = Path('output/runs'), driver_fa
                 detail = {'external_id': ref.external_id, 'url': ref.url, 'state': 'running'}
                 record['details'].append(detail)
                 checkpoint()
+                emit('detail_started', platform=portal, external_id=ref.external_id)
                 try:
                     print(f'[{portal}] detail id={ref.external_id}', flush=True)
                     time.sleep(request.delay)
@@ -98,6 +107,7 @@ def run(request: CrawlRequest, output_dir: Path = Path('output/runs'), driver_fa
                     record['jobs_accepted'] += 1
                     detail['state'] = 'success'
                     save_json(root / f'{portal}-{ref.external_id}.json', payload)
+                    emit('job', platform=portal, job=payload)
                 except Exception as exc:
                     if isinstance(exc, TimeoutException):
                         exc = access_problem(driver, include_pending=True) or exc
@@ -105,6 +115,7 @@ def run(request: CrawlRequest, output_dir: Path = Path('output/runs'), driver_fa
                     detail.update(state=status, error=f'{type(exc).__name__}: {exc}')
                     detail['diagnostics'] = diagnostics(driver, adapter)
                     manifest['errors'].append({'portal': portal, 'phase': 'detail', **detail})
+                    emit('detail_error', platform=portal, external_id=ref.external_id, status=status)
                     if status in {'login_required', 'challenge_blocked', 'access_denied'}:
                         record['stop_reason'] = status
                         return True
@@ -116,18 +127,20 @@ def run(request: CrawlRequest, output_dir: Path = Path('output/runs'), driver_fa
         try:
             print(f'[{portal}] headless={portal_request.headless}, date_filter={record["date_filter"]}', flush=True)
             driver = driver_factory(portal_request)
+            emit('browser_ready', platform=portal)
             for page in range(1, request.max_pages + 1):
                 print(f'[{portal}] listing page/batch={page}', flush=True)
+                emit('listing_started', platform=portal, page=page)
                 time.sleep(request.delay)
                 try:
-                    batch = adapter.advance(driver, page, set(refs))
+                    batch = adapter.advance(driver, page, set(refs) | seen_ids)
                 except TimeoutException as exc:
                     # A timeout cannot establish that the portal has no more results.
                     problem = access_problem(driver, include_pending=True)
                     if problem:
                         raise problem from exc
                     raise CrawlProblem('listing_timeout', f'Listing page/batch {page} did not become ready') from exc
-                new = [ref for ref in batch if ref.key not in refs]
+                new = [ref for ref in batch if ref.key not in refs and ref.key not in seen_ids]
                 selected = []
                 for ref in new:
                     if len(refs) >= request.max_jobs:
@@ -139,6 +152,8 @@ def run(request: CrawlRequest, output_dir: Path = Path('output/runs'), driver_fa
                                         'cards_found': len(batch), 'new_ids': len(new)})
                 record['jobs_discovered'] = len(refs)
                 checkpoint()
+                emit('page', platform=portal, page=page, keyword=request.keyword,
+                     references=[asdict(ref) for ref in selected])
                 if per_page and selected:
                     session = getattr(adapter, 'detail_session', None)
                     with session(driver) if session else nullcontext():
@@ -146,6 +161,8 @@ def run(request: CrawlRequest, output_dir: Path = Path('output/runs'), driver_fa
                     if stopped:
                         break
                 if not new:
+                    if batch and seen_ids and all(ref.key in seen_ids for ref in batch):
+                        continue  # Another keyword can share early pages; still honor max_pages.
                     record['stop_reason'] = 'no_new_ids' if batch else 'empty_or_end'
                     break
                 if len(refs) >= request.max_jobs:
@@ -154,7 +171,9 @@ def run(request: CrawlRequest, output_dir: Path = Path('output/runs'), driver_fa
             else:
                 record['stop_reason'] = 'max_pages'
         except Exception as exc:
-            status = exc.status if isinstance(exc, CrawlProblem) else 'failed'
+            status = (exc.status if isinstance(exc, CrawlProblem) else
+                      'driver_unavailable' if isinstance(exc, NoSuchDriverException) else
+                      'browser_start_failed' if driver is None else 'failed')
             record['listing_error'] = {'status': status, 'error': f'{type(exc).__name__}: {exc}'}
             record['listing_error']['diagnostics'] = diagnostics(driver, adapter)
             manifest['errors'].append({'portal': portal, 'phase': 'listing', **record['listing_error']})
@@ -175,6 +194,7 @@ def run(request: CrawlRequest, output_dir: Path = Path('output/runs'), driver_fa
             record['state'] = ('partial' if refs or record['jobs_accepted'] else 'failed') if errors else 'completed'
             checkpoint()
         print(f'[{portal}] discovered={len(refs)}, accepted={record["jobs_accepted"]}, state={record["state"]}')
+        emit('source_finished', platform=portal, state=record['state'], stop_reason=record['stop_reason'])
     manifest['state'] = 'completed_with_errors' if manifest['errors'] else 'completed'
     checkpoint()
     print(f'[DONE] {manifest["state"]}. Output: {root}')

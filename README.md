@@ -23,6 +23,8 @@ Selenium Manager obtains a matching ChromeDriver on first execution; that step n
 
 ## Run
 
+For the integrated manual UI flow, see [Phase A backend/worker runbook](../specs-careeros/CRAWLER_PHASE_A.md). The existing CareerOS FastAPI backend owns the PostgreSQL queue and migrations; `python -m app.crawler.worker` runs separately in the backend environment and invokes this repository's private Selenium-only JSONL entry point. No crawler HTTP service or server Browser Use is started. Page/day/job limits are configured from the Job Crawler UI; the CLI workflows below remain available independently.
+
 Existing Browser Use workflow (uses the existing `.env` settings):
 
 ```powershell

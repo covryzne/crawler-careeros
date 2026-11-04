@@ -554,3 +554,23 @@ def test_jobstreet_preserves_listing_and_checkpoints_before_later_challenge(tmp_
     assert len(result['jobs']) == 3
     assert driver.window_handles == ['listing']
     assert driver.closed
+
+
+def test_private_worker_events_are_incremental_and_preserve_local_output(tmp_path, monkeypatch):
+    class PerPage(Adapter):
+        details_per_page = True
+    driver = setup_runner(monkeypatch, PerPage)
+    events = []
+    result = run(request(max_jobs=1), tmp_path, lambda _: driver, event_sink=events.append)
+    assert [event['type'] for event in events] == [
+        'source_started', 'browser_ready', 'listing_started', 'page', 'detail_started', 'job', 'source_finished']
+    assert events[3]['references'][0]['external_id'] == events[5]['job']['external_id']
+    assert result['state'] == 'completed'
+    assert next(tmp_path.glob('*/jobs.json')).exists()
+
+
+def test_private_worker_skips_ids_seen_by_another_keyword(tmp_path, monkeypatch):
+    driver = setup_runner(monkeypatch)
+    result = run(request(max_pages=2), tmp_path, lambda _: driver, seen_ids={'jobstreet:1','jobstreet:2'})
+    assert [job['external_id'] for job in result['jobs']] == ['3']
+    assert result['sources'][0]['jobs_discovered'] == 1

@@ -66,6 +66,21 @@ def test_card_discovery_and_complete_detail_text(browser, portal, adapter_class,
         adapter.extract(page, refs[0])
 
 
+def test_linkedin_empty_overlay_uses_title_from_its_own_card(browser):
+    browser.get('about:blank')
+    browser.execute_script('''
+      document.body.innerHTML = `<ul class="jobs-search__results-list">
+        <li><a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/123/">
+        </a><h3 class="base-search-card__title">Data Engineer</h3></li>
+        <li><a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/456/">
+        <span class="sr-only" style="display:none">AI Engineer</span></a></li></ul>`;
+    ''')
+    adapter = LinkedInAdapter(CrawlRequest(keyword='Engineer', portals=('linkedin',)))
+    refs = adapter.collect(FixturePage(browser, adapter.search_url()), 1)
+    assert [(ref.external_id, ref.title) for ref in refs] == [
+        ('123', 'Data Engineer'), ('456', 'AI Engineer')]
+
+
 @pytest.mark.parametrize('portal,adapter_class,new_url', [
     ('glints', GlintsAdapter,
      'https://glints.com/id/opportunities/jobs/second-role/4330dc0e-5f94-4651-b484-fbb469bcc6a8'),
