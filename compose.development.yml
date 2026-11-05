@@ -1,0 +1,44 @@
+# Integrated DB-queue worker: backend coordinator + local Selenium subprocess in one image.
+# Select the backend env explicitly using --env-file; no backend/provider secrets are
+# injected except DATABASE_URL. Host/conda paths are replaced by container paths.
+name: careeros-crawler-development
+services:
+  crawler-worker:
+    build:
+      context: .
+      additional_contexts:
+        backend_source: ${BACKEND_CONTEXT:-../backend-careeros}
+    image: careeros-crawler:development-${IMAGE_TAG:-local}
+    init: true
+    restart: "no"
+    environment:
+      APP_ENV: development
+      ALLOW_LOCAL_IDENTITY: "false"
+      DATABASE_URL: ${DATABASE_URL:?Select the matching backend .env.development with --env-file}
+      CRAWLER_ROOT: /app/crawler
+      CRAWLER_PYTHON: /opt/crawler/bin/python
+      CRAWLER_BROWSER_MODE: headless
+      CRAWLER_RUN_TIMEOUT_SECONDS: ${CRAWLER_RUN_TIMEOUT_SECONDS:-3600}
+      CRAWLER_LEASE_SECONDS: ${CRAWLER_LEASE_SECONDS:-30}
+      AGENT_RUNTIME_ALLOWED: "false"
+      AGENT_WORKER_EMBEDDED: "false"
+      AGENT_ENABLED: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - artifacts:/app/crawler/output
+      - selenium-cache:/home/careeros/.cache/selenium
+      - ./src:/app/crawler/src:ro
+      - ${BACKEND_CONTEXT:-../backend-careeros}/app:/app/backend/app:ro
+    shm_size: 512m
+    mem_limit: 2g
+    cpus: 1.0
+    stop_grace_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+volumes:
+  artifacts:
+  selenium-cache:
