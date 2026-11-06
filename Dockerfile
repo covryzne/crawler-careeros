@@ -25,7 +25,9 @@ COPY --from=backend_source /app /app/backend/app
 COPY src /app/crawler/src
 COPY docker/entrypoint.py docker/browser_smoke.py /opt/careeros/
 RUN mkdir -p /app/crawler/output /home/careeros/.cache/selenium \
-    && chown -R careeros:careeros /app /home/careeros
+    && chown -R careeros:careeros /app /home/careeros \
+    && mkdir -p /tmp/.X11-unix \
+    && chmod 1777 /tmp/.X11-unix
 USER careeros
 ENTRYPOINT ["/opt/backend/bin/python", "/opt/careeros/entrypoint.py"]
 CMD ["/opt/backend/bin/python", "-m", "app.crawler.worker"]

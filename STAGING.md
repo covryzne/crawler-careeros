@@ -71,7 +71,7 @@ sudo docker compose --env-file ../backend-careeros/.env.staging -f compose.stagi
 sudo docker compose --env-file ../backend-careeros/.env.staging -f compose.staging.yml logs --tail=100 crawler-worker
 ```
 
-Look for the safe environment/browser/timeout summary, installed adapter check, worker ready, and `Idle: waiting for a queued run...`. Ready alone confirms adapter probing, not database polling. Repeated `Crawler polling unavailable` means DB/queue access is failing and no execution has started; inspect target DB connectivity and migration state. Unexpected exit/restart requires checking logs before triggering work.
+Look for the safe environment/browser/timeout summary, installed adapter check, worker ready, and `Idle: waiting for a queued run...`. Ready alone confirms adapter probing, not database polling. Failures now include phase, exception type, underlying driver exception type, SQLSTATE, connection invalidation and an explicit lease-loss code where known; SQL/parameters, DSNs, passwords and page content are not logged. Older images print only `Crawler polling unavailable`. Polling errors happen before a new execution starts; they alone do not prove a portal/browser failure. Inspect target DB connectivity and migration state. Unexpected exit/restart requires checking logs before triggering work.
 
 Once API and frontend are running, sign in and use Start Crawl Now with one portal, one keyword and small limits. Follow the same run ID in UI and worker logs. A ready worker does not imply a schedule is enabled; the current flow is manual.
 
