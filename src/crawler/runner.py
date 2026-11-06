@@ -13,6 +13,7 @@ from selenium.webdriver.common.by import By
 
 from .adapters import ADAPTERS
 from .adapters.base import CrawlProblem, access_problem
+from .artifacts import capture_failure
 from .models import CrawlRequest
 
 
@@ -113,6 +114,11 @@ def run(request: CrawlRequest, output_dir: Path = Path('output/runs'), driver_fa
                         exc = access_problem(driver, include_pending=True) or exc
                     status = exc.status if isinstance(exc, CrawlProblem) else 'failed'
                     detail.update(state=status, error=f'{type(exc).__name__}: {exc}')
+                    detail['failure_artifacts'] = capture_failure(
+                        driver, root, portal=portal, phase='detail', status=status,
+                        headless=portal_request.headless, run_id=run_id,
+                        page=ref.search_page, external_id=ref.external_id,
+                    )
                     detail['diagnostics'] = diagnostics(driver, adapter)
                     manifest['errors'].append({'portal': portal, 'phase': 'detail', **detail})
                     emit('detail_error', platform=portal, external_id=ref.external_id, status=status)
@@ -124,6 +130,7 @@ def run(request: CrawlRequest, output_dir: Path = Path('output/runs'), driver_fa
             return False
 
         checkpoint()
+        page = None
         try:
             print(f'[{portal}] headless={portal_request.headless}, date_filter={record["date_filter"]}', flush=True)
             driver = driver_factory(portal_request)
@@ -175,6 +182,10 @@ def run(request: CrawlRequest, output_dir: Path = Path('output/runs'), driver_fa
                       'driver_unavailable' if isinstance(exc, NoSuchDriverException) else
                       'browser_start_failed' if driver is None else 'failed')
             record['listing_error'] = {'status': status, 'error': f'{type(exc).__name__}: {exc}'}
+            record['listing_error']['failure_artifacts'] = capture_failure(
+                driver, root, portal=portal, phase='listing', status=status,
+                headless=portal_request.headless, run_id=run_id, page=page,
+            )
             record['listing_error']['diagnostics'] = diagnostics(driver, adapter)
             manifest['errors'].append({'portal': portal, 'phase': 'listing', **record['listing_error']})
             record['stop_reason'] = status

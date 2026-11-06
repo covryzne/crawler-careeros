@@ -75,6 +75,14 @@ Look for the safe environment/browser/timeout summary, installed adapter check, 
 
 Once API and frontend are running, sign in and use Start Crawl Now with one portal, one keyword and small limits. Follow the same run ID in UI and worker logs. A ready worker does not imply a schedule is enabled; the current flow is manual.
 
+If old logs show SQLSTATE 26000 / InvalidSqlStatementName, synchronize the backend prepared-statement fix and rebuild both API and worker images. Shared application and Alembic psycopg connections now use prepare_threshold=None. This is unrelated to headed mode or IP blocking; no database reset is needed. Verify new connections from the running worker without claiming a job:
+
+```bash
+sudo docker compose --env-file ../backend-careeros/.env.staging -f compose.staging.yml exec -T crawler-worker /opt/backend/bin/python -c "from app.db.session import engine; c=engine.raw_connection(); print('prepare_threshold=', c.driver_connection.prepare_threshold); c.close()"
+```
+
+Expected: `prepare_threshold= None`. This confirms the driver setting, not completion of a real portal crawl; monitor polling/heartbeat and perform a small manual run next.
+
 Stop gracefully:
 
 ```bash
@@ -82,6 +90,37 @@ sudo docker compose --env-file ../backend-careeros/.env.staging -f compose.stagi
 ```
 
 Docker init forwards SIGTERM to the worker; the worker cancels active work through the existing browser and lease cleanup path. Cancellation behavior is unit-tested; an actual browser shutdown in the target container still needs verification. If a slot is retained after interruption, follow the existing operator recovery procedure and confirm old browser processes have stopped; do not clear queue state blindly. Keep named artifact/cache volumes; do not use `down -v` to restart.
+
+## Failure evidence
+
+Listing and detail failures now attempt to capture a viewport PNG and JSON metadata before browser cleanup. This includes `challenge_blocked`. The manifest's `failure_artifacts` entry references these files relative to that CLI run's output directory. Capture happens when the failure is reported, after any verification timeout; it is not a recording of the first moment a challenge appeared.
+
+Metadata includes UTC `detected_at` and `captured_at`, portal, phase, page, browser mode, current page title, URL without query/fragment/credentials, and the internal CLI run ID. Screenshot or storage failure does not replace the original crawl outcome. A dead browser can leave metadata without a screenshot. No HTML or cookie dump is added.
+
+For queued worker runs, the existing private artifact volume contains:
+
+```text
+/app/crawler/output/service-runs/<backend-run-id>/<portal>/<keyword-index>/<cli-run-id>/
+  manifest.json
+  artifacts/
+    <portal>-<phase>-<unique-id>.png
+    <portal>-<phase>-<unique-id>.json
+```
+
+Stop the laptop worker before switching back to the Azure worker. After synchronizing this crawler change, rebuild and start it:
+
+```bash
+sudo docker compose --env-file ../backend-careeros/.env.staging -f compose.staging.yml up -d --build crawler-worker
+```
+
+Trigger a new, small manual run from the web. Existing failed runs cannot acquire screenshots retroactively. Copy its directory from the running worker, replacing `REPLACE_WITH_BACKEND_RUN_ID` with the ID shown in worker logs:
+
+```bash
+mkdir -p output/artifacts-review
+sudo docker cp careeros-crawler-staging-crawler-worker-1:/app/crawler/output/service-runs/REPLACE_WITH_BACKEND_RUN_ID ./output/artifacts-review/
+```
+
+These files persist across container replacement through the existing named volume. Do not use `down -v` when restarting. Screenshots remain private operator evidence: no public route or frontend download button is added. Retention is currently manual, so monitor volume usage. This capture helps diagnose a block; it does not clear the portal's challenge.
 
 ## Verification performed locally
 
