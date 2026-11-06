@@ -20,6 +20,14 @@ def parser() -> argparse.ArgumentParser:
     cli.add_argument('--max-jobs', type=int, default=20, help='Maximum detail attempts per portal')
     cli.add_argument('--timeout', type=float, default=20)
     cli.add_argument('--delay', type=float, default=2, help='Seconds between browser operations')
+    cli.add_argument('--auto-verify', action='store_true',
+                     help='Try available Cloudflare checkboxes on JobStreet/Indeed')
+    cli.add_argument('--verification-max-clicks', type=int, default=1,
+                     help='Maximum checkbox clicks per verification stage (1-20, default 1)')
+    cli.add_argument('--verification-timeout', type=float, default=60,
+                     help='Seconds to wait per verification stage with --auto-verify (maximum 300)')
+    cli.add_argument('--indeed-user-data-dir',
+                     help='Dedicated persistent Chrome user-data directory for Indeed only')
     browser = cli.add_mutually_exclusive_group()
     browser.add_argument('--headed', dest='headless', action='store_false',
                          help='Show the browser for all selected portals')
@@ -37,7 +45,9 @@ def main(argv=None):
     load_dotenv()
     if args.mode == 'browser-use':
         selenium_flags = ('--portals', '--location', '--linkedin-geo-id', '--days',
-                          '--max-pages', '--max-jobs', '--timeout', '--delay', '--headed', '--headless')
+                          '--max-pages', '--max-jobs', '--timeout', '--delay', '--headed', '--headless',
+                          '--auto-verify', '--verification-timeout', '--verification-max-clicks',
+                          '--indeed-user-data-dir')
         if any(value.split('=', 1)[0] in selenium_flags for value in argv):
             cli.error('Portal, location, date, page, job and browser options require --mode selenium; '
                       'Browser Use uses the existing .env settings')
@@ -56,6 +66,9 @@ def main(argv=None):
             linkedin_geo_id=args.linkedin_geo_id, days=args.days,
             max_pages=args.max_pages, max_jobs=args.max_jobs,
             timeout=args.timeout, delay=args.delay, headless=args.headless,
+            auto_verify=args.auto_verify, verification_timeout=args.verification_timeout,
+            verification_max_clicks=args.verification_max_clicks,
+            indeed_user_data_dir=args.indeed_user_data_dir,
         )
     except ValueError as exc:
         cli.error(str(exc))

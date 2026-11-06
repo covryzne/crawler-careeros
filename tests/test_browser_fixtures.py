@@ -38,6 +38,50 @@ def browser():
     driver.quit()
 
 
+@pytest.mark.parametrize('outer_mode', ['open', 'closed'])
+@pytest.mark.parametrize('inner_mode', ['open', 'closed'])
+@pytest.mark.parametrize('hidden_input', [False, True])
+def test_verification_checkbox_in_shadow_frame_clears_then_discovers(browser, outer_mode, inner_mode, hidden_input, required_clicks=1):
+    from src.crawler.verification import attempt_verification
+    browser.get('about:blank')
+    browser.execute_script('''
+      document.body.innerHTML = '<h1>Additional Verification Required</h1><div id="host"></div>';
+      const root=document.querySelector('#host').attachShadow({mode:arguments[0]});
+      const frame=document.createElement('iframe');
+      // srcdoc overrides src, so this fixture makes no Cloudflare request.
+      frame.srcdoc=`<div id="inner"></div><script>
+        const inner=document.querySelector('#inner').attachShadow({mode:'${arguments[1]}'});
+        const checkbox=document.createElement('input');
+        checkbox.type='checkbox';
+        let clicks=0;
+        checkbox.onclick=()=>{
+          if(++clicks >= ${arguments[3]}) top.document.querySelector('h1').textContent='Search results';
+          else setTimeout(()=>checkbox.checked=false, 20);
+        };
+        if(${arguments[2]}) {
+          const label=document.createElement('label');
+          label.textContent='Verify you are human';
+          checkbox.style.opacity='0';
+          label.append(checkbox);
+          inner.append(label);
+        } else inner.append(checkbox);
+      </script>`;
+      frame.src='https://challenges.cloudflare.com/cdn-cgi/challenge-platform/fixture';
+      root.append(frame);
+    ''', outer_mode, inner_mode, hidden_input, required_clicks)
+    attempts = []
+    attempt_verification(browser, 5, 'jobstreet', attempts, max_clicks=required_clicks)
+    assert attempts == [{'state': 'cleared', 'checkbox_clicked': True,
+                         'click_count': required_clicks, 'max_clicks': required_clicks}]
+    assert browser.find_element('css selector', 'h1').text == 'Search results'
+
+
+def test_retries_reset_checkbox_in_closed_shadow_frame(browser, monkeypatch):
+    monkeypatch.setattr('src.crawler.verification.CLICK_RETRY_INTERVAL', 0.05)
+    test_verification_checkbox_in_shadow_frame_clears_then_discovers(
+        browser, 'closed', 'closed', True, required_clicks=3)
+
+
 @pytest.mark.parametrize('portal,adapter_class,url,job_id', [
     ('jobstreet', JobStreetAdapter, 'https://id.jobstreet.com/id/job/95550334', '95550334'),
     ('linkedin', LinkedInAdapter, 'https://www.linkedin.com/jobs/view/4484811461/', '4484811461'),

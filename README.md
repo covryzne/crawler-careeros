@@ -68,10 +68,43 @@ Defaults are adapter-specific: JobStreet, Glints and Dealls use a visible browse
 - `--max-pages`: listing pages for JobStreet; initial listing plus additional load-more batches for LinkedIn; observed next-page controls or scroll batches for Glints and Indeed.
 - `--timeout`: navigation / explicit wait timeout, in seconds.
 - `--delay`: pacing between browser operations, default two seconds.
+- `--auto-verify`: on JobStreet/Indeed only, try exposed unchecked checkboxes inside a Cloudflare challenge iframe, then wait for the challenge page to clear. Normal listing/detail validation still determines success. Disabled by default; other portals keep their existing access handling.
+- `--verification-max-clicks`: maximum successful click commands per verification stage, default 1, range 1-20. Set 5 to permit up to five total clicks (not five extra retries). Retry only while the challenge remains and an enabled, unchecked control is available, at least five seconds after the previous click. Checked controls are never toggled off. Once the cap is reached, keep waiting for the last click's result until the verification deadline.
+- `--verification-timeout`: verification-stage deadline with `--auto-verify`, default 60 seconds, maximum 300. An unavailable checkbox, inaccessible shadow DOM, or unsuccessful verification remains `challenge_blocked`. This option does not guarantee access or solve other verification tasks.
 - `--location`: Indonesia by default. JobStreet, Glints, Dealls, Kalibrr and Tech in Asia currently support Indonesia only. Indeed uses an empty `l` for nationwide Indonesia or the supplied city. For another LinkedIn location, also supply its matching `--linkedin-geo-id`.
 - `--output-dir`: output parent for either strategy, default `output/runs`.
+- `--indeed-user-data-dir`: dedicated Chrome user-data directory reused only for Indeed. The directory is created if missing; the resolved path is recorded in the request, and Indeed's source records `browser_profile=persistent`. Other portals use their existing temporary profiles. Requires Indeed in `--portals`.
 
 Portal/date/browser CLI options apply only to Selenium and are rejected in Browser Use mode. Browser Use retains its `.env` limits (`MAX_SEARCH_PAGES`, `MAX_SOURCES`, `MAX_JOBS_PER_SOURCE`, `DISCOVERY_STEPS`, `EXPLORER_STEPS`).
+
+For a bounded JobStreet/Indeed verification attempt on a server:
+
+```bash
+xvfb-run -a python main.py --mode selenium --portals jobstreet indeed --keyword "AI Engineer" --max-pages 1 --max-jobs 3 --headed --auto-verify --verification-max-clicks 5 --verification-timeout 60
+```
+
+Each challenge stage logs its outcome to `sources[].verification_attempts` in the run manifest, including `checkbox_clicked`, `click_count`, and `max_clicks`. `--verification-timeout` is the total deadline for the stage, shared by all retries, not a new timeout per click. The crawler stops clicking when the challenge clears and validates the portal's listing/detail content before collecting jobs. A cleared challenge is not proof that jobs were extracted. The checkbox interaction is fixture-tested; live Cloudflare behavior may differ.
+
+Widget discovery uses native WebDriver shadow-root traversal, including closed roots exposed by Chrome, both around the iframe and inside it. Ordinary JavaScript `element.shadowRoot` discovery misses closed widgets even when the checkbox is visibly rendered.
+If CSS hides the input, the crawler can click its visible associated label. The label must belong to the discovered checkbox inside the Cloudflare frame.
+
+Azure live check on 2026-11-06: run `20261106T163131Z-62c0cc` extracted one JobStreet job without a challenge on that attempt. Indeed recorded `checkbox_clicked=true`, but its challenge did not clear within the 30-second verification deadline. Clicking the widget is verified; successful Indeed clearance is not. The complete suite passed 152 tests, including open/closed shadow roots and hidden-input label interactions in local Chrome fixtures.
+
+### Indeed persistent-profile experiment
+
+No Google account or Indeed login is required to create this profile. In the crawler directory, from an SSH session with working X11 forwarding (`echo "$DISPLAY"` is non-empty), open ordinary Chrome with a dedicated profile:
+
+```bash
+google-chrome --user-data-dir="$PWD/.browser-profiles/indeed" 'https://id.indeed.com/jobs?q=AI+Engineer&l=&fromage=7'
+```
+
+Complete verification manually until listings appear, then close every Chrome window using that dedicated profile and wait for Chrome to exit. Reuse the exact same directory, Linux user, and server for the crawler:
+
+```bash
+python main.py --mode selenium --portals indeed --keyword "AI Engineer" --max-pages 1 --max-jobs 3 --headed --indeed-user-data-dir "$PWD/.browser-profiles/indeed" --auto-verify --verification-max-clicks 1 --verification-timeout 120
+```
+
+Manual Chrome and Selenium cannot use this directory concurrently; parallel crawler runs also need separate profiles. If Chrome reports a profile-in-use/startup failure, close its owning browser before retrying; do not delete profile lock files while it is running. `.browser-profiles/` is Git-ignored because it contains browser session data. Without this flag, the current temporary-profile behavior is preserved. Reusing browser state is an experiment, not proof that Cloudflare will accept Selenium. The feature's local tests verify persistence and portal isolation, not live Indeed clearance.
 
 ## Structure
 

@@ -82,6 +82,18 @@ class PortalAdapter(ABC):
 
     def __init__(self, request: CrawlRequest):
         self.request = request
+        self.verification_attempts = []
+
+    def check_access(self, driver):
+        enabled = self.request.auto_verify and self.name in {'jobstreet', 'indeed'}
+        problem = access_problem(driver, include_pending=True) if enabled else access_problem(driver)
+        if enabled and problem and problem.status == 'challenge_blocked':
+            from ..verification import attempt_verification
+            attempt_verification(driver, self.request.verification_timeout,
+                                 self.name, self.verification_attempts,
+                                 max_clicks=self.request.verification_max_clicks)
+            return None
+        return problem
 
     @abstractmethod
     def search_url(self, page: int) -> str: ...
@@ -117,7 +129,7 @@ class PortalAdapter(ABC):
 
     def wait_listing(self, driver, page: int):
         def ready(browser):
-            problem = access_problem(browser)
+            problem = self.check_access(browser)
             if problem:
                 raise problem
             refs = self.collect(browser, page)
@@ -173,7 +185,7 @@ class PortalAdapter(ABC):
 
     def extract(self, driver, ref: JobReference) -> CrawledJob:
         def ready(browser):
-            problem = access_problem(browser)
+            problem = self.check_access(browser)
             if problem:
                 raise problem
             root = self.detail_context(browser, ref)

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 from src.browser_lab.schemas import ExtractedJob
@@ -19,6 +20,10 @@ class CrawlRequest:
     timeout: float = 20
     delay: float = 2
     headless: bool | None = None  # None selects the adapter's browser default.
+    auto_verify: bool = False  # Opt-in checkbox interaction for JobStreet/Indeed.
+    verification_timeout: float = 60
+    verification_max_clicks: int = 1
+    indeed_user_data_dir: str | None = None
 
     def __post_init__(self):
         if not self.keyword.strip() or not self.location.strip():
@@ -27,11 +32,22 @@ class CrawlRequest:
             raise ValueError(f'Choose at least one supported portal: {PORTALS}')
         if len(set(self.portals)) != len(self.portals):
             raise ValueError('portals must be unique')
+        if self.indeed_user_data_dir is not None:
+            if not isinstance(self.indeed_user_data_dir, str) or not self.indeed_user_data_dir.strip():
+                raise ValueError('indeed_user_data_dir must be a non-empty directory path')
+            if 'indeed' not in self.portals:
+                raise ValueError('--indeed-user-data-dir requires indeed in --portals')
+            object.__setattr__(self, 'indeed_user_data_dir',
+                               str(Path(self.indeed_user_data_dir).expanduser().resolve()))
         for name, maximum in (('days', 30), ('max_pages', 20), ('max_jobs', 200)):
             if not 1 <= getattr(self, name) <= maximum:
                 raise ValueError(f'{name} must be between 1 and {maximum}')
         if not 0 < self.timeout <= 120 or not 0 <= self.delay <= 60:
             raise ValueError('timeout must be > 0 and <= 120; delay must be >= 0 and <= 60')
+        if not 0 < self.verification_timeout <= 300:
+            raise ValueError('verification_timeout must be > 0 and <= 300')
+        if type(self.verification_max_clicks) is not int or not 1 <= self.verification_max_clicks <= 20:
+            raise ValueError('verification_max_clicks must be an integer between 1 and 20')
         if not self.linkedin_geo_id.isdigit():
             raise ValueError('linkedin_geo_id must contain digits')
         if ('linkedin' in self.portals and self.location.casefold().strip() != 'indonesia'

@@ -29,6 +29,10 @@ def create_driver(request):
     if request.headless is not False:
         options.add_argument('--headless=new')
     options.add_argument('--window-size=1440,1000')
+    if request.indeed_user_data_dir:
+        profile = Path(request.indeed_user_data_dir)
+        profile.mkdir(parents=True, exist_ok=True, mode=0o700)
+        options.add_argument(f'--user-data-dir={profile}')
     driver = webdriver.Chrome(options=options)
     driver.set_page_load_timeout(request.timeout)
     return driver
@@ -77,12 +81,16 @@ def run(request: CrawlRequest, output_dir: Path = Path('output/runs'), driver_fa
     checkpoint()
     for portal in request.portals:
         adapter_class = ADAPTERS[portal]
-        portal_request = replace(request, headless=(request.headless if request.headless is not None
+        portal_request = replace(request,
+                                 indeed_user_data_dir=(request.indeed_user_data_dir if portal == 'indeed' else None),
+                                 headless=(request.headless if request.headless is not None
                                   else getattr(adapter_class, 'default_headless', True)))
         record = {'portal': portal, 'state': 'running', 'pages': [], 'details': [],
                   'jobs_discovered': 0, 'jobs_accepted': 0, 'stop_reason': None,
                   'headless': portal_request.headless,
                   'date_filter': getattr(adapter_class, 'date_filter', 'portal_search_filter')}
+        if portal_request.indeed_user_data_dir:
+            record['browser_profile'] = 'persistent'
         manifest['sources'].append(record)
         emit('source_started', platform=portal, headless=portal_request.headless,
              date_filter=record['date_filter'])
@@ -133,6 +141,8 @@ def run(request: CrawlRequest, output_dir: Path = Path('output/runs'), driver_fa
         page = None
         try:
             print(f'[{portal}] headless={portal_request.headless}, date_filter={record["date_filter"]}', flush=True)
+            if portal_request.indeed_user_data_dir:
+                print(f'[{portal}] persistent profile={portal_request.indeed_user_data_dir}', flush=True)
             driver = driver_factory(portal_request)
             emit('browser_ready', platform=portal)
             for page in range(1, request.max_pages + 1):
@@ -203,6 +213,8 @@ def run(request: CrawlRequest, output_dir: Path = Path('output/runs'), driver_fa
                     manifest['errors'].append({'portal': portal, 'phase': 'cleanup', 'error': str(exc)})
             errors = [e for e in manifest['errors'] if e['portal'] == portal]
             record['state'] = ('partial' if refs or record['jobs_accepted'] else 'failed') if errors else 'completed'
+            if getattr(adapter, 'verification_attempts', None):
+                record['verification_attempts'] = adapter.verification_attempts
             checkpoint()
         print(f'[{portal}] discovered={len(refs)}, accepted={record["jobs_accepted"]}, state={record["state"]}')
         emit('source_finished', platform=portal, state=record['state'], stop_reason=record['stop_reason'])

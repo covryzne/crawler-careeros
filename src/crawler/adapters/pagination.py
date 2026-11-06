@@ -4,7 +4,7 @@ from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 
-from .base import CrawlProblem, PortalAdapter, access_problem, first_text
+from .base import CrawlProblem, PortalAdapter, first_text
 
 
 class ObservedPaginationAdapter(PortalAdapter):
@@ -25,7 +25,7 @@ class ObservedPaginationAdapter(PortalAdapter):
         driver.execute_script('window.scrollTo(0, document.body.scrollHeight)')
 
         def next_control(browser):
-            problem = access_problem(browser)
+            problem = self.check_access(browser)
             if problem:
                 raise problem
             # An infinite listing may have loaded more cards on scroll.
@@ -64,7 +64,7 @@ class ObservedPaginationAdapter(PortalAdapter):
             value.click()
 
         def ready(browser):
-            problem = access_problem(browser)
+            problem = self.check_access(browser)
             if problem:
                 raise problem
             refs = self.collect(browser, page)
