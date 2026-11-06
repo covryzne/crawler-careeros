@@ -6,6 +6,7 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.verification/
 *.egg-info/
 output/*
 !output/.gitkeep

@@ -5,7 +5,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
     PATH="/opt/backend/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     SE_CACHE_PATH=/home/careeros/.cache/selenium
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends chromium chromium-driver ca-certificates fonts-liberation \
+    && apt-get install -y --no-install-recommends chromium chromium-driver xvfb ca-certificates fonts-liberation \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 careeros \
     && useradd --uid 10001 --gid careeros --create-home careeros
@@ -23,7 +23,9 @@ RUN python -m venv /opt/backend \
 WORKDIR /app/backend
 COPY --from=backend_source /app /app/backend/app
 COPY src /app/crawler/src
+COPY docker/entrypoint.py docker/browser_smoke.py /opt/careeros/
 RUN mkdir -p /app/crawler/output /home/careeros/.cache/selenium \
     && chown -R careeros:careeros /app /home/careeros
 USER careeros
+ENTRYPOINT ["/opt/backend/bin/python", "/opt/careeros/entrypoint.py"]
 CMD ["/opt/backend/bin/python", "-m", "app.crawler.worker"]
