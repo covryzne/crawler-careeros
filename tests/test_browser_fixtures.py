@@ -182,6 +182,49 @@ def test_missing_pagination_is_reported_instead_of_assuming_end(browser):
     assert exc.value.status == 'pagination_unavailable'
 
 
+@pytest.mark.parametrize('portal', list(ADAPTERS))
+def test_all_adapters_recognize_positive_end_evidence(browser, portal):
+    browser.get('about:blank')
+    browser.execute_script('document.body.innerHTML = "<p data-fixture-end>All results loaded</p>"')
+    adapter = ADAPTERS[portal](CrawlRequest(keyword='data', portals=(portal,), timeout=0.2))
+    adapter.end_selectors = ('[data-fixture-end]',)
+    page = FixturePage(browser, adapter.search_url())
+    assert adapter.advance(page, 2, set()) == []
+
+
+@pytest.mark.parametrize('portal,total,keyword', [
+    ('dealls', 1, 'data'), ('dealls', 2, 'data'), ('dealls', 1, 'other'),
+    ('techinasia', 1, 'data'), ('techinasia', 2, 'data'),
+])
+def test_observed_listing_totals_distinguish_end_from_missing_navigation(browser, portal, total, keyword):
+    import json
+    browser.get('about:blank')
+    adapter = ADAPTERS[portal](CrawlRequest(keyword='data', portals=(portal,), timeout=0.2))
+    if portal == 'dealls':
+        html = '<a data-index="0" href="https://dealls.com/en/loker/data-engineer~example"><h2>Data Engineer</h2></a>'
+        html += '<a data-index="1" href="https://dealls.com/en/loker/recommended~other"><h2>Recommendation</h2></a>'
+        data = {'props': {'pageProps': {'dehydratedState': {'queries': [{
+            'queryKey': ['/v1/explore-job/job', {'search': keyword}],
+            'state': {'data': {'pages': [{'totalDocs': total, 'docs': [
+                {'slug': 'data-engineer', 'company': {'slug': 'example'}}]}]}}
+        }]}}}}
+        html += '<script id="__NEXT_DATA__" type="application/json">' + json.dumps(data) + '</script>'
+    else:
+        html = ('<h3 class="job-title"><a href="https://www.techinasia.com/jobs/'
+                '617f6576-cc1a-4057-a1fb-a974b56008a0">Data Engineer</a></h3>'
+                f'<div class="meta-item">Showing {total} results</div>')
+    browser.execute_script('document.body.innerHTML = arguments[0]', html)
+    page = FixturePage(browser, adapter.search_url())
+    refs = adapter.collect(page, 1)
+    assert len(refs) == (2 if portal == 'dealls' else 1)
+    if total == 1 and keyword == 'data':
+        assert adapter.advance(page, 2, {ref.key for ref in refs}) == []
+    else:
+        with pytest.raises(CrawlProblem) as exc:
+            adapter.advance(page, 2, {ref.key for ref in refs})
+        assert exc.value.status == 'pagination_unavailable'
+
+
 def test_indeed_uses_public_panel_and_retains_card_metadata(browser):
     browser.get((Path(__file__).parent / 'fixtures/indeed-panel.html').resolve().as_uri())
     adapter = IndeedAdapter(CrawlRequest(keyword='AI Engineer', portals=('indeed',), timeout=1))

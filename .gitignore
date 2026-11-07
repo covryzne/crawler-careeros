@@ -13,3 +13,6 @@ output/*
 browser-use-user-data/
 readme/
 .browser-profiles/
+
+# Local planning notes; keep implementation documentation trackable.
+/docs/*_PLAN.md

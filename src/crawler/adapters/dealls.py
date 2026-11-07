@@ -1,3 +1,4 @@
+import json
 import re
 from urllib.parse import quote, unquote, urlencode, urlsplit
 
@@ -20,6 +21,36 @@ class DeallsAdapter(ObservedPaginationAdapter):
 
     def search_url(self, page=1):
         return 'https://dealls.com/en?' + urlencode({'searchJob': self.request.keyword})
+
+    def listing_exhausted(self, driver, refs):
+        if super().listing_exhausted(driver, refs):
+            return True
+        # Public rendered Next.js state contains the search's advertised total.
+        # Bind it to this keyword and the actual cards, not unrelated queries.
+        for element in driver.find_elements(By.CSS_SELECTOR, 'script#__NEXT_DATA__'):
+            try:
+                data = json.loads(element.get_attribute('textContent') or '')
+                queries = data['props']['pageProps']['dehydratedState']['queries']
+                for query in queries:
+                    key = query.get('queryKey', [])
+                    if (not isinstance(key, list) or len(key) != 2
+                            or key[0] != '/v1/explore-job/job' or not isinstance(key[1], dict)
+                            or key[1].get('search') != self.request.keyword):
+                        continue
+                    pages = query['state']['data']['pages']
+                    if not pages:
+                        continue
+                    total = pages[-1].get('totalDocs')
+                    docs = [doc for page in pages for doc in page.get('docs', [])]
+                    expected = {f"{doc['slug']}~{doc['company']['slug']}" for doc in docs}
+                    actual = {ref.external_id for ref in refs}
+                    # Recommended cards can follow the search results. Count only
+                    # identities belonging to the matching search metadata.
+                    if type(total) is int and total >= 0 and len(expected) == total and expected <= actual:
+                        return True
+            except (ValueError, TypeError, KeyError, AttributeError):
+                continue  # Missing/stale metadata must not turn an uncertain listing into success.
+        return False
 
     def reference(self, url, title, source, page):
         parts = urlsplit(url)
