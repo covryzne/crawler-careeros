@@ -157,6 +157,9 @@ def run(request: CrawlRequest, output_dir: Path = Path('output/runs'), driver_fa
                     if problem:
                         raise problem from exc
                     raise CrawlProblem('listing_timeout', f'Listing page/batch {page} did not become ready') from exc
+                if not batch:
+                    record['stop_reason'] = 'listing_exhausted'
+                    break  # The empty/end probe is not a processed results page.
                 new = [ref for ref in batch if ref.key not in refs and ref.key not in seen_ids]
                 selected = []
                 for ref in new:
@@ -180,7 +183,7 @@ def run(request: CrawlRequest, output_dir: Path = Path('output/runs'), driver_fa
                 if not new:
                     if batch and seen_ids and all(ref.key in seen_ids for ref in batch):
                         continue  # Another keyword can share early pages; still honor max_pages.
-                    record['stop_reason'] = 'no_new_ids' if batch else 'empty_or_end'
+                    record['stop_reason'] = 'no_new_ids'
                     break
                 if len(refs) >= request.max_jobs:
                     record['stop_reason'] = 'max_jobs'
@@ -217,7 +220,10 @@ def run(request: CrawlRequest, output_dir: Path = Path('output/runs'), driver_fa
                 record['verification_attempts'] = adapter.verification_attempts
             checkpoint()
         print(f'[{portal}] discovered={len(refs)}, accepted={record["jobs_accepted"]}, state={record["state"]}')
-        emit('source_finished', platform=portal, state=record['state'], stop_reason=record['stop_reason'])
+        if record['stop_reason'] == 'listing_exhausted':
+            print(f'[{portal}] All available results processed; {len(record["pages"])} page(s)/batch(es).', flush=True)
+        emit('source_finished', platform=portal, state=record['state'], stop_reason=record['stop_reason'],
+             pages_completed=len(record['pages']))
     manifest['state'] = 'completed_with_errors' if manifest['errors'] else 'completed'
     checkpoint()
     print(f'[DONE] {manifest["state"]}. Output: {root}')

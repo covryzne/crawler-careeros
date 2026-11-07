@@ -135,6 +135,22 @@ def test_pagination_failure_preserves_discovered_jobs(tmp_path, monkeypatch):
     assert driver.closed
 
 
+def test_exhausted_listing_completes_before_requested_page_limit(tmp_path, monkeypatch):
+    class ExhaustedAdapter(Adapter):
+        def advance(self, driver, page, seen):
+            return super().advance(driver, page, seen) if page == 1 else []
+    driver = setup_runner(monkeypatch, ExhaustedAdapter)
+    events = []
+    result = run(request(max_pages=5), tmp_path, lambda _: driver, event_sink=events.append)
+    source = result['sources'][0]
+    assert result['state'] == source['state'] == 'completed'
+    assert source['stop_reason'] == 'listing_exhausted'
+    assert len(source['pages']) == 1 and len(result['jobs']) == 2
+    assert [e['page'] for e in events if e['type'] == 'page'] == [1]
+    assert events[-1]['stop_reason'] == 'listing_exhausted'
+    assert events[-1]['pages_completed'] == 1
+
+
 def test_detail_failure_continues_to_next_id(tmp_path, monkeypatch):
     class FailingAdapter(Adapter):
         detail_failure = True

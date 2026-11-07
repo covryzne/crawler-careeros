@@ -177,4 +177,23 @@ After these fixes, live run **`20261102T220312Z-1fd23b` completed with 5 discove
 
 New adapter verification on 2026-11-03 (local Windows Chrome): `20261103T061328Z-856653` saved 2/2 Tech in Asia details headless and 1/2 Kalibrr details headless; the second Kalibrr card redirected to the portal's 404 page. Dealls headless returned a Cloudflare access block. Headed Dealls run `20261103T061522Z-8976d4` saved 2/2 details. These are bounded first-page checks, not Azure verification. Full regression verification after adding the adapters: 104 tests passed, including local Chrome DOM fixtures.
 
-Pagination inspection then exposed transient Kalibrr landing-page cards before keyword-result hydration. The adapter now waits for the card identity list to remain stable for two seconds before checkpointing each batch. After this fix, headless keyword `AI Engineer` run `20261103T061937Z-2b76f6` saved 2/2 details. A listing-only Kalibrr check followed Load more jobs from 15 to 30 cards (15 new IDs). The bounded `data engineer` Dealls and Tech in Asia checks had no observable next control/end indicator and reported `pagination_unavailable`, so complete traversal is not established. Two additional unit regressions cover Kalibrr hydration and Cloudflare block classification; the latest unit run passed 84 tests (22 opt-in browser cases skipped).
+Pagination inspection then exposed transient Kalibrr landing-page cards before keyword-result hydration. The adapter now waits for the card identity list to remain stable for two seconds before checkpointing each batch. After this fix, headless keyword `AI Engineer` run `20261103T061937Z-2b76f6` saved 2/2 details. A listing-only Kalibrr check followed Load more jobs from 15 to 30 cards (15 new IDs). The bounded `data engineer` Dealls and Tech in Asia checks had no observable next control/end indicator and reported `pagination_unavailable`, so complete traversal was not established in those checks. Two additional unit regressions covered Kalibrr hydration and Cloudflare block classification.
+
+### Listing completion (2026-11-07)
+
+`--max-pages` is a ceiling. A confirmed empty/end listing stops successfully with
+`stop_reason=listing_exhausted`; the final end probe does not add a processed page.
+Missing navigation or a timeout alone still produces an error, preserving partial
+results. Other detail failures are not cleared by reaching the end of a listing.
+
+Dealls matches the keyword's public Next.js result identities against rendered
+cards and the advertised total, excluding recommendation cards from the end-count
+comparison. Tech in Asia compares its visible result total with unique cards.
+The shared adapter supports positive end markers, while observed pagination also
+recognizes disabled next controls. Portal-specific access checks remain in effect.
+Local Chrome fixtures and replay of saved public listing snapshots verify these
+paths; they do not establish current live Azure portal access.
+
+Dashboard/API portal availability is controlled by `CRAWLER_ENABLED_PORTALS` in
+the **backend** environment, not this CLI. Indeed remains registered here and may
+be tested explicitly with `--portals indeed` even when hidden in the dashboard.

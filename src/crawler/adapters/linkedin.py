@@ -16,6 +16,7 @@ class LinkedInAdapter(PortalAdapter):
     salary_selectors = ('.salary.compensation__salary', '.compensation__salary')
     posted_selectors = ('.posted-time-ago__text', '.posted-time-ago__text--new')
     empty_selectors = ('.jobs-search-no-results-banner', '.no-results')
+    end_selectors = ('.inline-notification--no-more-results',)
     expand_selectors = ('button.show-more-less-html__button--more',)
 
     def search_url(self, page=1):
@@ -72,8 +73,7 @@ class LinkedInAdapter(PortalAdapter):
             refs = self.collect(browser, page)
             if any(ref.key not in previous_ids for ref in refs):
                 return refs
-            if any(e.is_displayed() for e in browser.find_elements(
-                    By.CSS_SELECTOR, '.inline-notification--no-more-results')):
+            if self.listing_exhausted(browser, refs):
                 return 'end'
             if not clicked:
                 for button in browser.find_elements(By.CSS_SELECTOR, 'button.infinite-scroller__show-more-button'):

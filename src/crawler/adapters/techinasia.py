@@ -25,6 +25,18 @@ class TechInAsiaAdapter(ObservedPaginationAdapter):
         return 'https://www.techinasia.com/jobs/search?' + urlencode({
             'query': self.request.keyword, 'country_name[]': 'Indonesia'})
 
+    def listing_exhausted(self, driver, refs):
+        if super().listing_exhausted(driver, refs):
+            return True
+        # Observed public result counter, scoped away from vacancy descriptions.
+        for element in driver.find_elements(By.CSS_SELECTOR, '.meta-item'):
+            if not element.is_displayed():
+                continue
+            match = re.fullmatch(r'Showing\s+([\d,]+)\s+results?', element.text.strip(), re.I)
+            if match and len({ref.key for ref in refs}) == int(match[1].replace(',', '')):
+                return True
+        return False
+
     def reference(self, url, title, source, page):
         parts = urlsplit(url)
         if parts.scheme != 'https' or parts.hostname not in {'www.techinasia.com', 'techinasia.com'}:
