@@ -9,6 +9,8 @@ services:
       additional_contexts:
         backend_source: ${BACKEND_CONTEXT:-../backend-careeros}
     image: careeros-crawler:staging-${IMAGE_TAG:-local}
+    # Each replica executes one run. The shared DB capacity is configured separately.
+    scale: ${CRAWLER_WORKER_REPLICAS:-1}
     init: true
     restart: on-failure:3
     environment:
