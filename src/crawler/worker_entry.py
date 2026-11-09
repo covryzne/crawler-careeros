@@ -32,7 +32,8 @@ def main():
 
     with contextlib.redirect_stdout(sys.stderr):
         result = run(request, Path(data['output_dir']), event_sink=emit,
-                     seen_ids=data.get('seen_ids', []))
+                     seen_ids=data.get('seen_ids', []), known_ids=data.get('known_ids', []),
+                     new_job_budget=data.get('new_job_budget'))
     emit({'type': 'finished', 'state': result['state']})
 
 

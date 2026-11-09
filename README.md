@@ -1,8 +1,19 @@
 # CareerOS standalone crawler
 
-Backend integration is still preparation work. See [CRAWLER_INTEGRATION.md](../specs-careeros/CRAWLER_INTEGRATION.md) and [the proposed service contract](../specs-careeros/contracts/crawler-service.openapi.json) for the agreed service boundary and draft API. No crawler HTTP service, durable queue or scheduler is implemented by those documents.
+The standalone CLI remains available. The integrated Selenium worker uses the
+backend PostgreSQL queue; the backend dispatcher enqueues fixed-WIB schedules.
+See the [backend Phase B deployment runbook](../careeros-backend/README.md#staging-promotion-and-startup-order)
+for migration order, dispatcher startup and worker replicas. The earlier
+[integration proposal](../specs-careeros/CRAWLER_INTEGRATION.md) does not supersede
+the accepted Phase B decisions; no separate crawler HTTP service is required.
 
-Two search strategies, independent of the CareerOS backend:
+Staging Compose reads `CRAWLER_MAX_CONCURRENCY` (shared execution slots) and
+`CRAWLER_WORKER_REPLICAS` (worker containers) from the backend env supplied with
+`--env-file`. Both default to 1. Set both to 2 for the approved two-account test,
+then recreate workers. Rebuild this image whenever backend worker source changes;
+rebuilding only the API container leaves the old embedded worker code running.
+
+Two standalone search strategies:
 
 - `browser-use` (default): Google keyword discovery, then agent-driven exploration of discovered sources. Existing prompts, validation, limits, and output files are retained.
 - `selenium`: direct keyword search on explicitly selected portals, using source-specific adapters. No LLM calls or API keys are required.

@@ -60,9 +60,11 @@ def diagnostics(driver, adapter=None):
 
 
 def run(request: CrawlRequest, output_dir: Path = Path('output/runs'), driver_factory=None,
-        event_sink=None, seen_ids=None):
+        event_sink=None, seen_ids=None, known_ids=None, new_job_budget=None):
     driver_factory = driver_factory or create_driver
     seen_ids = set(seen_ids or ())
+    known_ids = set(known_ids or ())
+    new_job_budget = request.max_jobs if new_job_budget is None else new_job_budget
 
     def emit(kind, **data):
         if event_sink is not None:
@@ -95,8 +97,10 @@ def run(request: CrawlRequest, output_dir: Path = Path('output/runs'), driver_fa
         emit('source_started', platform=portal, headless=portal_request.headless,
              date_filter=record['date_filter'])
         driver = None
+        new_discoveries = 0
         adapter = adapter_class(portal_request)
         refs = {}
+        observed_ids = set()
         per_page = getattr(adapter, 'details_per_page', False)
         record['detail_schedule'] = 'per_page' if per_page else 'after_discovery'
 
@@ -150,7 +154,7 @@ def run(request: CrawlRequest, output_dir: Path = Path('output/runs'), driver_fa
                 emit('listing_started', platform=portal, page=page)
                 time.sleep(request.delay)
                 try:
-                    batch = adapter.advance(driver, page, set(refs) | seen_ids)
+                    batch = adapter.advance(driver, page, set(refs) | seen_ids | observed_ids)
                 except TimeoutException as exc:
                     # A timeout cannot establish that the portal has no more results.
                     problem = access_problem(driver, include_pending=True)
@@ -160,11 +164,16 @@ def run(request: CrawlRequest, output_dir: Path = Path('output/runs'), driver_fa
                 if not batch:
                     record['stop_reason'] = 'listing_exhausted'
                     break  # The empty/end probe is not a processed results page.
-                new = [ref for ref in batch if ref.key not in refs and ref.key not in seen_ids]
+                new = [ref for ref in batch if ref.key not in refs and ref.key not in seen_ids and ref.key not in observed_ids]
+                observed_ids.update(ref.key for ref in batch)
                 selected = []
                 for ref in new:
                     if len(refs) >= request.max_jobs:
                         break
+                    if ref.key not in known_ids:
+                        if new_discoveries >= new_job_budget:
+                            continue
+                        new_discoveries += 1
                     refs[ref.key] = ref
                     selected.append(ref)
                     manifest['discovered_jobs'].append({'keyword': request.keyword, **asdict(ref)})
