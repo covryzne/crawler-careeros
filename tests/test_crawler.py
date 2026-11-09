@@ -135,6 +135,15 @@ def test_pagination_failure_preserves_discovered_jobs(tmp_path, monkeypatch):
     assert driver.closed
 
 
+def test_retry_can_process_known_failed_id_when_new_card_budget_is_zero(tmp_path, monkeypatch):
+    driver = setup_runner(monkeypatch)
+    result = run(request(max_jobs=1), tmp_path, lambda _: driver,
+                 seen_ids=['jobstreet:2'], known_ids=['jobstreet:1', 'jobstreet:2'], new_job_budget=0)
+    assert result['state'] == 'completed'
+    assert [job['external_id'] for job in result['jobs']] == ['1']
+    assert result['sources'][0]['jobs_discovered'] == 1
+
+
 def test_exhausted_listing_completes_before_requested_page_limit(tmp_path, monkeypatch):
     class ExhaustedAdapter(Adapter):
         def advance(self, driver, page, seen):
