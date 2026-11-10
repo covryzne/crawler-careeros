@@ -18,6 +18,14 @@ Two standalone search strategies:
 - `browser-use` (default): Google keyword discovery, then agent-driven exploration of discovered sources. Existing prompts, validation, limits, and output files are retained.
 - `selenium`: direct keyword search on explicitly selected portals, using source-specific adapters. No LLM calls or API keys are required.
 
+The local CLI loads `.env` through dotenv, so copy `.env.example` (or the equivalent
+`.env.development.example`) there and fill only the provider values needed for
+Browser Use. Staging/production example files document the integrated deployment;
+they do not duplicate worker credentials. Worker Compose reads the backend's
+private env via `--env-file`. Keep database, portal policy and concurrency there.
+Production examples explicitly note the remaining worker/Compose prerequisites;
+they do not imply production support is already enabled.
+
 ## Setup
 
 Python 3.12 or 3.13 and Google Chrome are required. From this directory:
