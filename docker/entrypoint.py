@@ -8,6 +8,7 @@ import os
 import select
 import subprocess
 import sys
+from time import monotonic
 
 
 def start_display():
@@ -22,6 +23,7 @@ def start_display():
                 "-screen",
                 "0",
                 "1440x1000x24",
+                "-noreset",
                 "-nolisten",
                 "tcp",
             ],
@@ -29,13 +31,28 @@ def start_display():
         )
         os.close(write_fd)
         write_fd = None
-        # Xvfb writes a display number only after it has acquired a display and is ready.
-        if not select.select([read_fd], [], [], 15)[0]:
-            raise RuntimeError("Virtual display startup timed out")
-        number = os.read(read_fd, 32).decode().strip()
+        # Xorg writes the number and newline separately. Keep the read end open
+        # until BOTH arrive: closing after the digits can crash Xvfb's second write.
+        deadline = monotonic() + 15
+        reply = b""
+        while b"\n" not in reply:
+            if process.poll() is not None:
+                raise RuntimeError("Virtual display exited during startup")
+            remaining = deadline - monotonic()
+            if remaining <= 0 or not select.select([read_fd], [], [], remaining)[0]:
+                raise RuntimeError("Virtual display startup timed out")
+            chunk = os.read(read_fd, 32)
+            if not chunk:
+                raise RuntimeError(
+                    "Virtual display closed readiness pipe before newline"
+                )
+            reply += chunk
+            if len(reply) > 16:
+                raise RuntimeError("Invalid virtual display readiness response")
+        number = reply[:-1]
         if not number.isdigit() or process.poll() is not None:
             raise RuntimeError("Virtual display failed to start")
-        os.environ["DISPLAY"] = f":{number}"
+        os.environ["DISPLAY"] = f":{number.decode('ascii')}"
     except BaseException:
         if process is not None and process.poll() is None:
             process.terminate()
