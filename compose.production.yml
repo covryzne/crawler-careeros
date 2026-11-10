@@ -9,6 +9,8 @@ services:
       additional_contexts:
         backend_source: ${BACKEND_CONTEXT:-../backend-careeros}
     image: careeros-crawler:production-${IMAGE_TAG:-local}
+    # Each replica executes one run. The shared DB capacity is configured separately.
+    scale: ${CRAWLER_WORKER_REPLICAS:-1}
     init: true
     restart: on-failure:3
     environment:
@@ -17,7 +19,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:?Select the matching backend .env.production with --env-file}
       CRAWLER_ROOT: /app/crawler
       CRAWLER_PYTHON: /opt/crawler/bin/python
-      CRAWLER_BROWSER_MODE: headless
+      CRAWLER_BROWSER_MODE: ${CRAWLER_BROWSER_MODE:-headless}
       CRAWLER_RUN_TIMEOUT_SECONDS: ${CRAWLER_RUN_TIMEOUT_SECONDS:-3600}
       CRAWLER_MAX_CONCURRENCY: ${CRAWLER_MAX_CONCURRENCY:-1}
       CRAWLER_LEASE_SECONDS: ${CRAWLER_LEASE_SECONDS:-30}

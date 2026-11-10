@@ -23,8 +23,10 @@ The local CLI loads `.env` through dotenv, so copy `.env.example` (or the equiva
 Browser Use. Staging/production example files document the integrated deployment;
 they do not duplicate worker credentials. Worker Compose reads the backend's
 private env via `--env-file`. Keep database, portal policy and concurrency there.
-Production examples explicitly note the remaining worker/Compose prerequisites;
-they do not imply production support is already enabled.
+Production Compose now follows the staging replica/browser-mode wiring; use the
+matching production-enabled backend worker source when building. Migrations and
+dispatcher/statistics startup remain explicit deployment steps. Templates and
+Compose validation do not establish live production portal access.
 
 ## Setup
 
