@@ -30,6 +30,44 @@ Compose validation do not establish live production portal access.
 
 ## Setup
 
+### Headed container startup and display handshake
+
+The entrypoint waits for the complete newline-terminated Xvfb display notification.
+Xorg writes the display digits and newline separately; closing the pipe after only
+the digits can crash Xvfb with `Cannot write display number to fd ...`, even though
+the worker reported `display_ready=True`. The fixed startup uses one 15-second
+deadline, checks the process, cleans up on invalid/partial replies and runs Xvfb
+with `-noreset` for consecutive browser sessions. Each worker container keeps its
+own display; Compose, database schema and browser mode settings are unchanged.
+
+Promote this crawler change from dev to staging and pull it on the VM. From the
+server parent directory, build the image, then smoke-test it BEFORE replacing the
+workers. Keep the backend env's `CRAWLER_BROWSER_MODE=headed` if that is your chosen
+mode. This smoke opens only a local data URL and never claims a database job:
+
+```bash
+sudo docker compose --env-file backend-careeros/.env.staging -f crawler-careeros/compose.staging.yml build crawler-worker
+sudo docker compose --env-file backend-careeros/.env.staging -f crawler-careeros/compose.staging.yml run --rm --no-deps crawler-worker /opt/crawler/bin/python /opt/careeros/browser_smoke.py
+```
+
+Expected: `Browser smoke passed: mode=headed, sessions=2` and both sessions report
+`headless=False`. Auto mode tests one headed and one headless session. If smoke
+fails, inspect that failure before replacing workers. Once current jobs have ended
+and smoke passes:
+
+```bash
+sudo docker compose --env-file backend-careeros/.env.staging -f crawler-careeros/compose.staging.yml up -d --force-recreate crawler-worker
+sudo docker compose --env-file backend-careeros/.env.staging -f crawler-careeros/compose.staging.yml logs --tail=50 crawler-worker
+```
+
+Then retry the failed portal from the dashboard. Only the crawler image/containers
+need rebuilding for this fix; backend, frontend, migrations and private env files
+are unchanged. After staging passes, promote to main and repeat the same commands
+with `.production` instead of `.staging`. The smoke proves browser startup, not
+live portal access or challenge clearance.
+
+### Standalone CLI setup
+
 Python 3.12 or 3.13 and Google Chrome are required. From this directory:
 
 ```powershell
