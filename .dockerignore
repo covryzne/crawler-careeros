@@ -17,5 +17,6 @@ __pycache__
 .verification
 output
 browser-use-user-data
+.browser-profiles
 *.log
 *.tsbuildinfo
