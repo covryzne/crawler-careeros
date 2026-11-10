@@ -135,6 +135,31 @@ def test_pagination_failure_preserves_discovered_jobs(tmp_path, monkeypatch):
     assert driver.closed
 
 
+def test_retry_can_process_known_failed_id_when_new_card_budget_is_zero(tmp_path, monkeypatch):
+    driver = setup_runner(monkeypatch)
+    result = run(request(max_jobs=1), tmp_path, lambda _: driver,
+                 seen_ids=['jobstreet:2'], known_ids=['jobstreet:1', 'jobstreet:2'], new_job_budget=0)
+    assert result['state'] == 'completed'
+    assert [job['external_id'] for job in result['jobs']] == ['1']
+    assert result['sources'][0]['jobs_discovered'] == 1
+
+
+def test_exhausted_listing_completes_before_requested_page_limit(tmp_path, monkeypatch):
+    class ExhaustedAdapter(Adapter):
+        def advance(self, driver, page, seen):
+            return super().advance(driver, page, seen) if page == 1 else []
+    driver = setup_runner(monkeypatch, ExhaustedAdapter)
+    events = []
+    result = run(request(max_pages=5), tmp_path, lambda _: driver, event_sink=events.append)
+    source = result['sources'][0]
+    assert result['state'] == source['state'] == 'completed'
+    assert source['stop_reason'] == 'listing_exhausted'
+    assert len(source['pages']) == 1 and len(result['jobs']) == 2
+    assert [e['page'] for e in events if e['type'] == 'page'] == [1]
+    assert events[-1]['stop_reason'] == 'listing_exhausted'
+    assert events[-1]['pages_completed'] == 1
+
+
 def test_detail_failure_continues_to_next_id(tmp_path, monkeypatch):
     class FailingAdapter(Adapter):
         detail_failure = True
@@ -554,3 +579,23 @@ def test_jobstreet_preserves_listing_and_checkpoints_before_later_challenge(tmp_
     assert len(result['jobs']) == 3
     assert driver.window_handles == ['listing']
     assert driver.closed
+
+
+def test_private_worker_events_are_incremental_and_preserve_local_output(tmp_path, monkeypatch):
+    class PerPage(Adapter):
+        details_per_page = True
+    driver = setup_runner(monkeypatch, PerPage)
+    events = []
+    result = run(request(max_jobs=1), tmp_path, lambda _: driver, event_sink=events.append)
+    assert [event['type'] for event in events] == [
+        'source_started', 'browser_ready', 'listing_started', 'page', 'detail_started', 'job', 'source_finished']
+    assert events[3]['references'][0]['external_id'] == events[5]['job']['external_id']
+    assert result['state'] == 'completed'
+    assert next(tmp_path.glob('*/jobs.json')).exists()
+
+
+def test_private_worker_skips_ids_seen_by_another_keyword(tmp_path, monkeypatch):
+    driver = setup_runner(monkeypatch)
+    result = run(request(max_pages=2), tmp_path, lambda _: driver, seen_ids={'jobstreet:1','jobstreet:2'})
+    assert [job['external_id'] for job in result['jobs']] == ['3']
+    assert result['sources'][0]['jobs_discovered'] == 1

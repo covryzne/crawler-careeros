@@ -4,7 +4,7 @@ from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 
-from .base import CrawlProblem, PortalAdapter, access_problem, first_text
+from .base import CrawlProblem, PortalAdapter, first_text
 
 
 class ObservedPaginationAdapter(PortalAdapter):
@@ -25,13 +25,15 @@ class ObservedPaginationAdapter(PortalAdapter):
         driver.execute_script('window.scrollTo(0, document.body.scrollHeight)')
 
         def next_control(browser):
-            problem = access_problem(browser)
+            problem = self.check_access(browser)
             if problem:
                 raise problem
             # An infinite listing may have loaded more cards on scroll.
             refs = self.collect(browser, page)
             if any(ref.key not in previous_ids for ref in refs):
                 return ('loaded', refs)
+            if self.listing_exhausted(browser, refs):
+                return ('end', None)
             for control in self.next_controls(browser):
                 if not control.is_displayed():
                     continue
@@ -42,8 +44,6 @@ class ObservedPaginationAdapter(PortalAdapter):
             if first_text(browser, self.pagination_login_selectors):
                 # Public detail URLs already collected may still be visited.
                 raise CrawlProblem('pagination_login_required', 'More listing results require login; guest limit reached')
-            if first_text(browser, self.empty_selectors):
-                return ('end', None)
             return False
 
         try:
@@ -64,13 +64,13 @@ class ObservedPaginationAdapter(PortalAdapter):
             value.click()
 
         def ready(browser):
-            problem = access_problem(browser)
+            problem = self.check_access(browser)
             if problem:
                 raise problem
             refs = self.collect(browser, page)
             if any(ref.key not in previous_ids for ref in refs):
                 return ('ready', refs)
-            if first_text(browser, self.empty_selectors):
+            if self.listing_exhausted(browser, refs):
                 return ('ready', [])
             return False
         return WebDriverWait(driver, self.request.timeout).until(ready)[1]

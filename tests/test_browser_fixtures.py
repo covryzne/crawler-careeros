@@ -38,6 +38,50 @@ def browser():
     driver.quit()
 
 
+@pytest.mark.parametrize('outer_mode', ['open', 'closed'])
+@pytest.mark.parametrize('inner_mode', ['open', 'closed'])
+@pytest.mark.parametrize('hidden_input', [False, True])
+def test_verification_checkbox_in_shadow_frame_clears_then_discovers(browser, outer_mode, inner_mode, hidden_input, required_clicks=1):
+    from src.crawler.verification import attempt_verification
+    browser.get('about:blank')
+    browser.execute_script('''
+      document.body.innerHTML = '<h1>Additional Verification Required</h1><div id="host"></div>';
+      const root=document.querySelector('#host').attachShadow({mode:arguments[0]});
+      const frame=document.createElement('iframe');
+      // srcdoc overrides src, so this fixture makes no Cloudflare request.
+      frame.srcdoc=`<div id="inner"></div><script>
+        const inner=document.querySelector('#inner').attachShadow({mode:'${arguments[1]}'});
+        const checkbox=document.createElement('input');
+        checkbox.type='checkbox';
+        let clicks=0;
+        checkbox.onclick=()=>{
+          if(++clicks >= ${arguments[3]}) top.document.querySelector('h1').textContent='Search results';
+          else setTimeout(()=>checkbox.checked=false, 20);
+        };
+        if(${arguments[2]}) {
+          const label=document.createElement('label');
+          label.textContent='Verify you are human';
+          checkbox.style.opacity='0';
+          label.append(checkbox);
+          inner.append(label);
+        } else inner.append(checkbox);
+      </script>`;
+      frame.src='https://challenges.cloudflare.com/cdn-cgi/challenge-platform/fixture';
+      root.append(frame);
+    ''', outer_mode, inner_mode, hidden_input, required_clicks)
+    attempts = []
+    attempt_verification(browser, 5, 'jobstreet', attempts, max_clicks=required_clicks)
+    assert attempts == [{'state': 'cleared', 'checkbox_clicked': True,
+                         'click_count': required_clicks, 'max_clicks': required_clicks}]
+    assert browser.find_element('css selector', 'h1').text == 'Search results'
+
+
+def test_retries_reset_checkbox_in_closed_shadow_frame(browser, monkeypatch):
+    monkeypatch.setattr('src.crawler.verification.CLICK_RETRY_INTERVAL', 0.05)
+    test_verification_checkbox_in_shadow_frame_clears_then_discovers(
+        browser, 'closed', 'closed', True, required_clicks=3)
+
+
 @pytest.mark.parametrize('portal,adapter_class,url,job_id', [
     ('jobstreet', JobStreetAdapter, 'https://id.jobstreet.com/id/job/95550334', '95550334'),
     ('linkedin', LinkedInAdapter, 'https://www.linkedin.com/jobs/view/4484811461/', '4484811461'),
@@ -64,6 +108,21 @@ def test_card_discovery_and_complete_detail_text(browser, portal, adapter_class,
     page.current_url = url.replace(job_id, '999')
     with pytest.raises(TimeoutException):
         adapter.extract(page, refs[0])
+
+
+def test_linkedin_empty_overlay_uses_title_from_its_own_card(browser):
+    browser.get('about:blank')
+    browser.execute_script('''
+      document.body.innerHTML = `<ul class="jobs-search__results-list">
+        <li><a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/123/">
+        </a><h3 class="base-search-card__title">Data Engineer</h3></li>
+        <li><a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/456/">
+        <span class="sr-only" style="display:none">AI Engineer</span></a></li></ul>`;
+    ''')
+    adapter = LinkedInAdapter(CrawlRequest(keyword='Engineer', portals=('linkedin',)))
+    refs = adapter.collect(FixturePage(browser, adapter.search_url()), 1)
+    assert [(ref.external_id, ref.title) for ref in refs] == [
+        ('123', 'Data Engineer'), ('456', 'AI Engineer')]
 
 
 @pytest.mark.parametrize('portal,adapter_class,new_url', [
@@ -121,6 +180,49 @@ def test_missing_pagination_is_reported_instead_of_assuming_end(browser):
     with pytest.raises(CrawlProblem) as exc:
         adapter.advance(page, 2, {ref.key for ref in adapter.collect(page, 1)})
     assert exc.value.status == 'pagination_unavailable'
+
+
+@pytest.mark.parametrize('portal', list(ADAPTERS))
+def test_all_adapters_recognize_positive_end_evidence(browser, portal):
+    browser.get('about:blank')
+    browser.execute_script('document.body.innerHTML = "<p data-fixture-end>All results loaded</p>"')
+    adapter = ADAPTERS[portal](CrawlRequest(keyword='data', portals=(portal,), timeout=0.2))
+    adapter.end_selectors = ('[data-fixture-end]',)
+    page = FixturePage(browser, adapter.search_url())
+    assert adapter.advance(page, 2, set()) == []
+
+
+@pytest.mark.parametrize('portal,total,keyword', [
+    ('dealls', 1, 'data'), ('dealls', 2, 'data'), ('dealls', 1, 'other'),
+    ('techinasia', 1, 'data'), ('techinasia', 2, 'data'),
+])
+def test_observed_listing_totals_distinguish_end_from_missing_navigation(browser, portal, total, keyword):
+    import json
+    browser.get('about:blank')
+    adapter = ADAPTERS[portal](CrawlRequest(keyword='data', portals=(portal,), timeout=0.2))
+    if portal == 'dealls':
+        html = '<a data-index="0" href="https://dealls.com/en/loker/data-engineer~example"><h2>Data Engineer</h2></a>'
+        html += '<a data-index="1" href="https://dealls.com/en/loker/recommended~other"><h2>Recommendation</h2></a>'
+        data = {'props': {'pageProps': {'dehydratedState': {'queries': [{
+            'queryKey': ['/v1/explore-job/job', {'search': keyword}],
+            'state': {'data': {'pages': [{'totalDocs': total, 'docs': [
+                {'slug': 'data-engineer', 'company': {'slug': 'example'}}]}]}}
+        }]}}}}
+        html += '<script id="__NEXT_DATA__" type="application/json">' + json.dumps(data) + '</script>'
+    else:
+        html = ('<h3 class="job-title"><a href="https://www.techinasia.com/jobs/'
+                '617f6576-cc1a-4057-a1fb-a974b56008a0">Data Engineer</a></h3>'
+                f'<div class="meta-item">Showing {total} results</div>')
+    browser.execute_script('document.body.innerHTML = arguments[0]', html)
+    page = FixturePage(browser, adapter.search_url())
+    refs = adapter.collect(page, 1)
+    assert len(refs) == (2 if portal == 'dealls' else 1)
+    if total == 1 and keyword == 'data':
+        assert adapter.advance(page, 2, {ref.key for ref in refs}) == []
+    else:
+        with pytest.raises(CrawlProblem) as exc:
+            adapter.advance(page, 2, {ref.key for ref in refs})
+        assert exc.value.status == 'pagination_unavailable'
 
 
 def test_indeed_uses_public_panel_and_retains_card_metadata(browser):

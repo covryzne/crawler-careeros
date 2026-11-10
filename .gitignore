@@ -1,9 +1,18 @@
 .venv/
 .env
+.env.*
+!.env.example
+!.env.*.example
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.verification/
 *.egg-info/
 output/*
 !output/.gitkeep
 browser-use-user-data/
+readme/
+.browser-profiles/
+
+# Local planning notes; keep implementation documentation trackable.
+/docs/*_PLAN.md

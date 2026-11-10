@@ -17,6 +17,8 @@ class JobStreetAdapter(PortalAdapter):
     salary_selectors = ('[data-automation="job-detail-salary"]',)
     posted_selectors = ('[data-automation="job-detail-date"]',)
     empty_selectors = ('[data-automation="searchZeroResults"]', '[data-automation="no-results"]')
+    end_selectors = ('[data-automation="page-next"][aria-disabled="true"]',
+                     'button[data-automation="page-next"]:disabled')
 
     def search_url(self, page=1):
         slug = re.sub(r'[^\w]+', '-', self.request.keyword.casefold(), flags=re.UNICODE).strip('-')

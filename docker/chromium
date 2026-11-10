@@ -1,0 +1,3 @@
+#!/bin/sh
+# Browser sandbox disabled inside this dedicated non-root container.
+exec /usr/bin/chromium-distribution --no-sandbox "$@"

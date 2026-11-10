@@ -8,7 +8,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 from ..models import JobReference
 from .pagination import ObservedPaginationAdapter
-from .base import CrawlProblem, access_problem, first_text
+from .base import CrawlProblem, first_text
 
 
 class IndeedAdapter(ObservedPaginationAdapter):
@@ -46,7 +46,7 @@ class IndeedAdapter(ObservedPaginationAdapter):
 
     def advance(self, driver, page, previous_ids):
         if page > 1 and self._listing_url:
-            problem = access_problem(driver)
+            problem = self.check_access(driver)
             if problem:
                 raise problem
             if self._listing_key(driver.current_url) != self._listing_key(self._listing_url):
@@ -239,7 +239,7 @@ class IndeedAdapter(ObservedPaginationAdapter):
     def open_detail(self, driver, ref):
         # Use the public card interaction and its search-page panel. Do not force
         # /viewjob navigation, which can require authentication for anonymous users.
-        problem = access_problem(driver)
+        problem = self.check_access(driver)
         if problem:
             raise problem
         source = urlsplit(ref.discovered_from)
@@ -250,7 +250,7 @@ class IndeedAdapter(ObservedPaginationAdapter):
         self._previous_panel_id = self._previous_description = None
         if self._listing_key(driver.current_url) != self._listing_key(ref.discovered_from):
             driver.get(ref.discovered_from)
-        problem = access_problem(driver)
+        problem = self.check_access(driver)
         if problem:
             raise problem
         self._optional_login(driver)

@@ -1,0 +1,2 @@
+# Keep the container entry script executable by Linux shells after Windows checkouts.
+docker/chromium text eol=lf

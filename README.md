@@ -1,11 +1,30 @@
 # CareerOS standalone crawler
 
-Backend integration is still preparation work. See [CRAWLER_INTEGRATION.md](../specs-careeros/CRAWLER_INTEGRATION.md) and [the proposed service contract](../specs-careeros/contracts/crawler-service.openapi.json) for the agreed service boundary and draft API. No crawler HTTP service, durable queue or scheduler is implemented by those documents.
+The standalone CLI remains available. The integrated Selenium worker uses the
+backend PostgreSQL queue; the backend dispatcher enqueues fixed-WIB schedules.
+See the [backend Phase B deployment runbook](../careeros-backend/README.md#staging-promotion-and-startup-order)
+for migration order, dispatcher startup and worker replicas. The earlier
+[integration proposal](../specs-careeros/CRAWLER_INTEGRATION.md) does not supersede
+the accepted Phase B decisions; no separate crawler HTTP service is required.
 
-Two search strategies, independent of the CareerOS backend:
+Staging Compose reads `CRAWLER_MAX_CONCURRENCY` (shared execution slots) and
+`CRAWLER_WORKER_REPLICAS` (worker containers) from the backend env supplied with
+`--env-file`. Both default to 1. Set both to 2 for the approved two-account test,
+then recreate workers. Rebuild this image whenever backend worker source changes;
+rebuilding only the API container leaves the old embedded worker code running.
+
+Two standalone search strategies:
 
 - `browser-use` (default): Google keyword discovery, then agent-driven exploration of discovered sources. Existing prompts, validation, limits, and output files are retained.
 - `selenium`: direct keyword search on explicitly selected portals, using source-specific adapters. No LLM calls or API keys are required.
+
+The local CLI loads `.env` through dotenv, so copy `.env.example` (or the equivalent
+`.env.development.example`) there and fill only the provider values needed for
+Browser Use. Staging/production example files document the integrated deployment;
+they do not duplicate worker credentials. Worker Compose reads the backend's
+private env via `--env-file`. Keep database, portal policy and concurrency there.
+Production examples explicitly note the remaining worker/Compose prerequisites;
+they do not imply production support is already enabled.
 
 ## Setup
 
@@ -22,6 +41,8 @@ Or use `uv sync --extra test --python 3.12`. For Browser Use, also run `uvx brow
 Selenium Manager obtains a matching ChromeDriver on first execution; that step needs network access. Optionally set `SE_CACHE_PATH` to a writable driver-cache directory. See [Selenium Manager](https://www.selenium.dev/documentation/selenium_manager/).
 
 ## Run
+
+For the integrated manual UI flow, see [Phase A backend/worker runbook](../specs-careeros/CRAWLER_PHASE_A.md). The existing CareerOS FastAPI backend owns the PostgreSQL queue and migrations; `python -m app.crawler.worker` runs separately in the backend environment and invokes this repository's private Selenium-only JSONL entry point. No crawler HTTP service or server Browser Use is started. Page/day/job limits are configured from the Job Crawler UI; the CLI workflows below remain available independently.
 
 Existing Browser Use workflow (uses the existing `.env` settings):
 
@@ -66,10 +87,43 @@ Defaults are adapter-specific: JobStreet, Glints and Dealls use a visible browse
 - `--max-pages`: listing pages for JobStreet; initial listing plus additional load-more batches for LinkedIn; observed next-page controls or scroll batches for Glints and Indeed.
 - `--timeout`: navigation / explicit wait timeout, in seconds.
 - `--delay`: pacing between browser operations, default two seconds.
+- `--auto-verify`: on JobStreet/Indeed only, try exposed unchecked checkboxes inside a Cloudflare challenge iframe, then wait for the challenge page to clear. Normal listing/detail validation still determines success. Disabled by default; other portals keep their existing access handling.
+- `--verification-max-clicks`: maximum successful click commands per verification stage, default 1, range 1-20. Set 5 to permit up to five total clicks (not five extra retries). Retry only while the challenge remains and an enabled, unchecked control is available, at least five seconds after the previous click. Checked controls are never toggled off. Once the cap is reached, keep waiting for the last click's result until the verification deadline.
+- `--verification-timeout`: verification-stage deadline with `--auto-verify`, default 60 seconds, maximum 300. An unavailable checkbox, inaccessible shadow DOM, or unsuccessful verification remains `challenge_blocked`. This option does not guarantee access or solve other verification tasks.
 - `--location`: Indonesia by default. JobStreet, Glints, Dealls, Kalibrr and Tech in Asia currently support Indonesia only. Indeed uses an empty `l` for nationwide Indonesia or the supplied city. For another LinkedIn location, also supply its matching `--linkedin-geo-id`.
 - `--output-dir`: output parent for either strategy, default `output/runs`.
+- `--indeed-user-data-dir`: dedicated Chrome user-data directory reused only for Indeed. The directory is created if missing; the resolved path is recorded in the request, and Indeed's source records `browser_profile=persistent`. Other portals use their existing temporary profiles. Requires Indeed in `--portals`.
 
 Portal/date/browser CLI options apply only to Selenium and are rejected in Browser Use mode. Browser Use retains its `.env` limits (`MAX_SEARCH_PAGES`, `MAX_SOURCES`, `MAX_JOBS_PER_SOURCE`, `DISCOVERY_STEPS`, `EXPLORER_STEPS`).
+
+For a bounded JobStreet/Indeed verification attempt on a server:
+
+```bash
+xvfb-run -a python main.py --mode selenium --portals jobstreet indeed --keyword "AI Engineer" --max-pages 1 --max-jobs 3 --headed --auto-verify --verification-max-clicks 5 --verification-timeout 60
+```
+
+Each challenge stage logs its outcome to `sources[].verification_attempts` in the run manifest, including `checkbox_clicked`, `click_count`, and `max_clicks`. `--verification-timeout` is the total deadline for the stage, shared by all retries, not a new timeout per click. The crawler stops clicking when the challenge clears and validates the portal's listing/detail content before collecting jobs. A cleared challenge is not proof that jobs were extracted. The checkbox interaction is fixture-tested; live Cloudflare behavior may differ.
+
+Widget discovery uses native WebDriver shadow-root traversal, including closed roots exposed by Chrome, both around the iframe and inside it. Ordinary JavaScript `element.shadowRoot` discovery misses closed widgets even when the checkbox is visibly rendered.
+If CSS hides the input, the crawler can click its visible associated label. The label must belong to the discovered checkbox inside the Cloudflare frame.
+
+Azure live check on 2026-11-06: run `20261106T163131Z-62c0cc` extracted one JobStreet job without a challenge on that attempt. Indeed recorded `checkbox_clicked=true`, but its challenge did not clear within the 30-second verification deadline. Clicking the widget is verified; successful Indeed clearance is not. The complete suite passed 152 tests, including open/closed shadow roots and hidden-input label interactions in local Chrome fixtures.
+
+### Indeed persistent-profile experiment
+
+No Google account or Indeed login is required to create this profile. In the crawler directory, from an SSH session with working X11 forwarding (`echo "$DISPLAY"` is non-empty), open ordinary Chrome with a dedicated profile:
+
+```bash
+google-chrome --user-data-dir="$PWD/.browser-profiles/indeed" 'https://id.indeed.com/jobs?q=AI+Engineer&l=&fromage=7'
+```
+
+Complete verification manually until listings appear, then close every Chrome window using that dedicated profile and wait for Chrome to exit. Reuse the exact same directory, Linux user, and server for the crawler:
+
+```bash
+python main.py --mode selenium --portals indeed --keyword "AI Engineer" --max-pages 1 --max-jobs 3 --headed --indeed-user-data-dir "$PWD/.browser-profiles/indeed" --auto-verify --verification-max-clicks 1 --verification-timeout 120
+```
+
+Manual Chrome and Selenium cannot use this directory concurrently; parallel crawler runs also need separate profiles. If Chrome reports a profile-in-use/startup failure, close its owning browser before retrying; do not delete profile lock files while it is running. `.browser-profiles/` is Git-ignored because it contains browser session data. Without this flag, the current temporary-profile behavior is preserved. Reusing browser state is an experiment, not proof that Cloudflare will accept Selenium. The feature's local tests verify persistence and portal isolation, not live Indeed clearance.
 
 ## Structure
 
@@ -142,4 +196,23 @@ After these fixes, live run **`20261102T220312Z-1fd23b` completed with 5 discove
 
 New adapter verification on 2026-11-03 (local Windows Chrome): `20261103T061328Z-856653` saved 2/2 Tech in Asia details headless and 1/2 Kalibrr details headless; the second Kalibrr card redirected to the portal's 404 page. Dealls headless returned a Cloudflare access block. Headed Dealls run `20261103T061522Z-8976d4` saved 2/2 details. These are bounded first-page checks, not Azure verification. Full regression verification after adding the adapters: 104 tests passed, including local Chrome DOM fixtures.
 
-Pagination inspection then exposed transient Kalibrr landing-page cards before keyword-result hydration. The adapter now waits for the card identity list to remain stable for two seconds before checkpointing each batch. After this fix, headless keyword `AI Engineer` run `20261103T061937Z-2b76f6` saved 2/2 details. A listing-only Kalibrr check followed Load more jobs from 15 to 30 cards (15 new IDs). The bounded `data engineer` Dealls and Tech in Asia checks had no observable next control/end indicator and reported `pagination_unavailable`, so complete traversal is not established. Two additional unit regressions cover Kalibrr hydration and Cloudflare block classification; the latest unit run passed 84 tests (22 opt-in browser cases skipped).
+Pagination inspection then exposed transient Kalibrr landing-page cards before keyword-result hydration. The adapter now waits for the card identity list to remain stable for two seconds before checkpointing each batch. After this fix, headless keyword `AI Engineer` run `20261103T061937Z-2b76f6` saved 2/2 details. A listing-only Kalibrr check followed Load more jobs from 15 to 30 cards (15 new IDs). The bounded `data engineer` Dealls and Tech in Asia checks had no observable next control/end indicator and reported `pagination_unavailable`, so complete traversal was not established in those checks. Two additional unit regressions covered Kalibrr hydration and Cloudflare block classification.
+
+### Listing completion (2026-11-07)
+
+`--max-pages` is a ceiling. A confirmed empty/end listing stops successfully with
+`stop_reason=listing_exhausted`; the final end probe does not add a processed page.
+Missing navigation or a timeout alone still produces an error, preserving partial
+results. Other detail failures are not cleared by reaching the end of a listing.
+
+Dealls matches the keyword's public Next.js result identities against rendered
+cards and the advertised total, excluding recommendation cards from the end-count
+comparison. Tech in Asia compares its visible result total with unique cards.
+The shared adapter supports positive end markers, while observed pagination also
+recognizes disabled next controls. Portal-specific access checks remain in effect.
+Local Chrome fixtures and replay of saved public listing snapshots verify these
+paths; they do not establish current live Azure portal access.
+
+Dashboard/API portal availability is controlled by `CRAWLER_ENABLED_PORTALS` in
+the **backend** environment, not this CLI. Indeed remains registered here and may
+be tested explicitly with `--portals indeed` even when hidden in the dashboard.

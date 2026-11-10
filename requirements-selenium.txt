@@ -1,0 +1,4 @@
+# Isolated server engine; Browser Use stays local-only.
+pydantic>=2.10,<3
+python-dotenv>=1.0,<2
+selenium>=4.27,<5

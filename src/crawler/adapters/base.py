@@ -78,10 +78,23 @@ class PortalAdapter(ABC):
     salary_selectors: tuple[str, ...] = ()
     posted_selectors: tuple[str, ...] = ()
     empty_selectors: tuple[str, ...] = ()
+    end_selectors: tuple[str, ...] = ()
     expand_selectors: tuple[str, ...] = ()
 
     def __init__(self, request: CrawlRequest):
         self.request = request
+        self.verification_attempts = []
+
+    def check_access(self, driver):
+        enabled = self.request.auto_verify and self.name in {'jobstreet', 'indeed'}
+        problem = access_problem(driver, include_pending=True) if enabled else access_problem(driver)
+        if enabled and problem and problem.status == 'challenge_blocked':
+            from ..verification import attempt_verification
+            attempt_verification(driver, self.request.verification_timeout,
+                                 self.name, self.verification_attempts,
+                                 max_clicks=self.request.verification_max_clicks)
+            return None
+        return problem
 
     @abstractmethod
     def search_url(self, page: int) -> str: ...
@@ -117,21 +130,36 @@ class PortalAdapter(ABC):
 
     def wait_listing(self, driver, page: int):
         def ready(browser):
-            problem = access_problem(browser)
+            problem = self.check_access(browser)
             if problem:
                 raise problem
             refs = self.collect(browser, page)
             if refs:
                 return refs
-            if first_text(browser, self.empty_selectors):
+            if self.listing_exhausted(browser, refs):
                 return 'empty'
             return False
         result = WebDriverWait(driver, self.request.timeout).until(ready)
         return [] if result == 'empty' else result
 
     def advance(self, driver, page: int, previous_ids: set[str]) -> list[JobReference]:
+        if page > 1:
+            problem = self.check_access(driver)
+            if problem:
+                raise problem
+            refs = self.collect(driver, page - 1)
+            if self.listing_exhausted(driver, refs):
+                return []
         driver.get(self.search_url(page))
         return self.wait_listing(driver, page)
+
+    def listing_exhausted(self, driver, refs) -> bool:
+        """Only positive portal evidence establishes the end; missing controls do not."""
+        return bool(first_text(driver, self.empty_selectors) or any(
+            element.is_displayed()
+            for selector in self.end_selectors
+            for element in driver.find_elements(By.CSS_SELECTOR, selector)
+        ))
 
     def extra_fields(self, driver, ref: JobReference) -> dict:
         return {}
@@ -173,7 +201,7 @@ class PortalAdapter(ABC):
 
     def extract(self, driver, ref: JobReference) -> CrawledJob:
         def ready(browser):
-            problem = access_problem(browser)
+            problem = self.check_access(browser)
             if problem:
                 raise problem
             root = self.detail_context(browser, ref)
